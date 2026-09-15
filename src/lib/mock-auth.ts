@@ -29,6 +29,7 @@ export function getUser(): MockUser | null {
 export const DEMO_USER: MockUser = { name: "Niranjana A R", email: "niranjana@labsight.ai" };
 
 export async function supabaseSignUp(email: string, password: string, fullName: string) {
+  if (!supabase) return null;
   const { data, error } = await supabase.auth.signUp({
     email,
     password,
@@ -45,20 +46,19 @@ export async function supabaseSignUp(email: string, password: string, fullName: 
 }
 
 export async function supabaseSignIn(email: string, password: string) {
+  if (!supabase) return null;
   const { data, error } = await supabase.auth.signInWithPassword({ email, password });
   if (error) throw error;
   return data;
 }
 
 export async function supabaseSignOut() {
+  if (!supabase) return;
   await supabase.auth.signOut();
 }
 
-export function getSupabaseUser(): User | null {
-  return supabase.auth.getUser().then(({ data }) => data.user).catch(() => null) as unknown as User | null;
-}
-
 export async function getCurrentUser(): Promise<MockUser | null> {
+  if (!supabase) return getUser();
   const { data } = await supabase.auth.getUser();
   if (!data.user) return getUser();
   const { data: profile } = await supabase
