@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import {
   Activity,
@@ -8,6 +8,7 @@ import {
   Gauge,
   LayoutDashboard,
   LineChart,
+  LogIn,
   LogOut,
   Menu,
   Settings,
@@ -16,7 +17,13 @@ import {
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { DEMO_USER, getUser, signOut, supabaseSignOut } from "@/lib/mock-auth";
+import {
+  getCurrentUser,
+  isDemoMode,
+  signOut,
+  supabaseSignOut,
+  type MockUser,
+} from "@/lib/mock-auth";
 import { toast } from "sonner";
 
 const NAV = [
@@ -43,7 +50,13 @@ export function BrandMark({ compact = false }: { compact?: boolean }) {
   );
 }
 
-function NavLinks({ onNavigate, collapsed }: { onNavigate?: (() => void) | undefined; collapsed?: boolean | undefined }) {
+function NavLinks({
+  onNavigate,
+  collapsed,
+}: {
+  onNavigate?: (() => void) | undefined;
+  collapsed?: boolean | undefined;
+}) {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   return (
     <nav className="flex flex-col gap-1">
@@ -73,15 +86,18 @@ function NavLinks({ onNavigate, collapsed }: { onNavigate?: (() => void) | undef
 
 function SidebarBody({
   collapsed,
+  user,
+  demo,
   onNavigate,
   onToggle,
 }: {
   collapsed: boolean;
+  user: MockUser | null;
+  demo: boolean;
   onNavigate?: (() => void) | undefined;
   onToggle?: (() => void) | undefined;
 }) {
   const navigate = useNavigate();
-  const user = getUser() ?? DEMO_USER;
 
   return (
     <div className="flex h-full flex-col gap-6 p-4">
@@ -95,7 +111,9 @@ function SidebarBody({
             aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
             className="hidden shrink-0 rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-white/5 hover:text-foreground lg:block"
           >
-            <ChevronLeft className={cn("h-4 w-4 transition-transform", collapsed && "rotate-180")} />
+            <ChevronLeft
+              className={cn("h-4 w-4 transition-transform", collapsed && "rotate-180")}
+            />
           </button>
         )}
       </div>
@@ -103,24 +121,47 @@ function SidebarBody({
       <NavLinks onNavigate={onNavigate} collapsed={collapsed} />
 
       <div className="mt-auto space-y-3">
-        {!collapsed && (
+        {!collapsed && user && (
           <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
-            <p className="truncate text-sm font-semibold">{user.name}</p>
+            <div className="flex items-center justify-between gap-2">
+              <p className="truncate text-sm font-semibold">{user.name}</p>
+              {demo ? (
+                <span className="rounded bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-medium text-amber-300">
+                  Demo
+                </span>
+              ) : (
+                <span className="rounded bg-emerald-500/20 px-1.5 py-0.5 text-[10px] font-medium text-emerald-400">
+                  Active
+                </span>
+              )}
+            </div>
             <p className="truncate text-xs text-muted-foreground">{user.email}</p>
           </div>
         )}
-        <button
-          onClick={async () => {
-            await supabaseSignOut();
-            signOut();
-            toast.success("Signed out");
-            navigate({ to: "/" });
-          }}
-          className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-white/5 hover:text-foreground"
-        >
-          <LogOut className="h-[18px] w-[18px] shrink-0" aria-hidden />
-          {!collapsed && "Log out"}
-        </button>
+
+        {user ? (
+          <button
+            onClick={async () => {
+              await supabaseSignOut();
+              signOut();
+              toast.success("Signed out");
+              navigate({ to: "/" });
+            }}
+            className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-white/5 hover:text-foreground"
+          >
+            <LogOut className="h-[18px] w-[18px] shrink-0" aria-hidden />
+            {!collapsed && (demo ? "Exit Demo" : "Log out")}
+          </button>
+        ) : (
+          <Link
+            to="/login"
+            onClick={onNavigate}
+            className="flex w-full items-center gap-3 rounded-xl bg-primary/10 px-3 py-2.5 text-sm font-medium text-primary transition-colors hover:bg-primary/20"
+          >
+            <LogIn className="h-[18px] w-[18px] shrink-0" aria-hidden />
+            {!collapsed && "Sign in"}
+          </Link>
+        )}
       </div>
     </div>
   );
@@ -129,6 +170,20 @@ function SidebarBody({
 export function AppShell({ children }: { children: ReactNode }) {
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [user, setUser] = useState<MockUser | null>(null);
+  const [demo, setDemo] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    getCurrentUser().then((u) => {
+      if (!active) return;
+      setUser(u);
+      setDemo(isDemoMode() && !u?.id?.includes("-")); // demo only if not a real user uuid
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   return (
     <div className="ambient-glow min-h-screen">
@@ -139,29 +194,73 @@ export function AppShell({ children }: { children: ReactNode }) {
             collapsed ? "w-[84px]" : "w-[264px]",
           )}
         >
-          <SidebarBody collapsed={collapsed} onToggle={() => setCollapsed((c) => !c)} />
+          <SidebarBody
+            collapsed={collapsed}
+            user={user}
+            demo={demo}
+            onToggle={() => setCollapsed((c) => !c)}
+          />
         </aside>
 
         <div className="min-w-0 flex-1">
-          <header className="glass sticky top-0 z-30 flex items-center gap-3 rounded-none border-x-0 border-t-0 px-4 py-3 lg:hidden">
-            <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
-              <SheetTrigger asChild>
-                <Button variant="ghost" size="icon" aria-label="Open menu">
-                  <Menu className="h-5 w-5" />
-                </Button>
-              </SheetTrigger>
-              <SheetContent side="left" className="glass-strong w-[272px] p-0">
-                <SheetTitle className="sr-only">Navigation</SheetTitle>
-                <SidebarBody collapsed={false} onNavigate={() => setMobileOpen(false)} />
-              </SheetContent>
-            </Sheet>
-            <BrandMark />
-            <span className="ml-auto inline-flex items-center gap-1.5 rounded-full border border-primary/25 bg-primary/10 px-2.5 py-1 text-[11px] font-semibold text-primary">
-              <Activity className="h-3 w-3" /> Demo
-            </span>
+          <header className="glass sticky top-0 z-30 flex items-center justify-between gap-3 rounded-none border-x-0 border-t-0 px-4 py-3">
+            <div className="flex items-center gap-3">
+              <div className="lg:hidden">
+                <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
+                  <SheetTrigger asChild>
+                    <Button variant="ghost" size="icon" aria-label="Open menu">
+                      <Menu className="h-5 w-5" />
+                    </Button>
+                  </SheetTrigger>
+                  <SheetContent side="left" className="glass-strong w-[272px] p-0">
+                    <SheetTitle className="sr-only">Navigation</SheetTitle>
+                    <SidebarBody
+                      collapsed={false}
+                      user={user}
+                      demo={demo}
+                      onNavigate={() => setMobileOpen(false)}
+                    />
+                  </SheetContent>
+                </Sheet>
+              </div>
+              <div className="lg:hidden">
+                <BrandMark />
+              </div>
+            </div>
+
+            <div className="ml-auto flex items-center gap-3">
+              {demo ? (
+                <div className="flex items-center gap-2">
+                  <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 text-[11px] font-medium text-amber-300">
+                    <Activity className="h-3 w-3" /> Demo Mode
+                  </span>
+                  <Link
+                    to="/signup"
+                    className="hidden text-xs font-semibold text-primary hover:underline sm:inline"
+                  >
+                    Create Account
+                  </Link>
+                </div>
+              ) : user ? (
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-[11px] font-medium text-emerald-400">
+                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                  Connected Account
+                </span>
+              ) : (
+                <Link
+                  to="/login"
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground"
+                >
+                  <LogIn className="h-3.5 w-3.5" />
+                  Sign In
+                </Link>
+              )}
+            </div>
           </header>
 
-          <main className="mx-auto w-full max-w-[1180px] px-4 py-6 sm:px-6 sm:py-8">{children}</main>
+          <main className="mx-auto w-full max-w-[1180px] px-4 py-6 sm:px-6 sm:py-8">
+            {children}
+          </main>
         </div>
       </div>
     </div>

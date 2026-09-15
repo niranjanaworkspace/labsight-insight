@@ -10,6 +10,7 @@ import {
   YAxis,
 } from "recharts";
 import { byKey, trendRows } from "@/lib/labsight-data";
+import { isDemoMode } from "@/lib/mock-auth";
 
 export const SERIES_COLORS = [
   "var(--teal)",
@@ -26,13 +27,26 @@ export interface ChartParamMeta {
   unit: string;
 }
 
-function GlassTooltip({ active, payload, label }: any) {
+interface TooltipPayloadItem {
+  dataKey: string;
+  value: number | string;
+  color?: string;
+  payload?: Record<string, unknown>;
+}
+
+interface GlassTooltipProps {
+  active?: boolean;
+  payload?: TooltipPayloadItem[];
+  label?: string;
+}
+
+function GlassTooltip({ active, payload, label }: GlassTooltipProps) {
   if (!active || !payload?.length) return null;
   return (
     <div className="glass-strong rounded-xl px-3 py-2 text-xs">
       <p className="mb-1.5 font-semibold text-foreground">{label}</p>
       <div className="space-y-1">
-        {payload.map((item: any) => {
+        {payload.map((item: TooltipPayloadItem) => {
           const meta = paramMetaLookup.get(item.dataKey);
           const name = meta?.name ?? item.dataKey;
           const unit = meta?.unit ?? "";
@@ -70,12 +84,23 @@ export function TrendChart({
   data?: Record<string, string | number>[];
   paramMeta?: ChartParamMeta[];
 }) {
-  const chartData = data ?? trendRows;
+  const chartData = data ?? (isDemoMode() ? trendRows : []);
 
   if (paramMeta) {
     paramMetaLookup = new Map(paramMeta.map((p) => [p.key, p]));
   } else {
     paramMetaLookup = new Map();
+  }
+
+  if (chartData.length === 0 || keys.length === 0) {
+    return (
+      <div
+        style={{ width: "100%", height }}
+        className="flex items-center justify-center rounded-2xl border border-dashed border-white/10 text-xs text-muted-foreground"
+      >
+        No recorded trend data
+      </div>
+    );
   }
 
   const axis = { stroke: "var(--muted-foreground)", fontSize: 12 };
@@ -175,6 +200,16 @@ export function TrendChart({
 }
 
 export function Sparkline({ values, color }: { values: number[]; color: string }) {
+  if (!values || values.length === 0) {
+    return <span className="text-xs text-muted-foreground">—</span>;
+  }
+  if (values.length === 1) {
+    return (
+      <svg width="62" height="22" viewBox="0 0 62 22" aria-hidden className="overflow-visible">
+        <circle cx="31" cy="11" r="3.5" fill={color} />
+      </svg>
+    );
+  }
   const min = Math.min(...values);
   const max = Math.max(...values);
   const span = max - min || 1;

@@ -16,7 +16,7 @@ import { GlassCard } from "@/components/labsight/glass-card";
 import { StatusBadge } from "@/components/labsight/status-badge";
 import { TrendChart } from "@/components/labsight/trend-chart";
 import { MedicalDisclaimer } from "@/components/labsight/disclaimer";
-import { DEMO_USER, getCurrentUser } from "@/lib/mock-auth";
+import { getCurrentUser } from "@/lib/mock-auth";
 import type { MockUser } from "@/lib/mock-auth";
 import { fetchDashboardData, type DashboardData } from "@/lib/dashboard-data";
 import type { Status } from "@/lib/labsight-data";
@@ -62,10 +62,10 @@ function Dashboard() {
       try {
         const [u, d] = await Promise.all([getCurrentUser(), fetchDashboardData()]);
         if (cancelled) return;
-        setUser(u ?? DEMO_USER);
+        setUser(u);
         setData(d);
         const firstTwo = d.parameters.slice(0, 2).map((p) => p.key);
-        setActive(firstTwo.length > 0 ? firstTwo : ["tsh", "hemoglobin"]);
+        setActive(firstTwo.length > 0 ? firstTwo : []);
         setOpen(d.findings[0]?.id ?? null);
       } catch (err) {
         if (cancelled) return;
@@ -81,7 +81,11 @@ function Dashboard() {
 
   const toggle = (key: string) =>
     setActive((prev) =>
-      prev.includes(key) ? (prev.length > 1 ? prev.filter((k) => k !== key) : prev) : [...prev, key],
+      prev.includes(key)
+        ? prev.length > 1
+          ? prev.filter((k) => k !== key)
+          : prev
+        : [...prev, key],
     );
 
   const statValues = data
@@ -231,7 +235,9 @@ function Dashboard() {
                             </ul>
                           )}
                           {f.recommendation && (
-                            <p className="text-sm font-medium text-foreground">{f.recommendation}</p>
+                            <p className="text-sm font-medium text-foreground">
+                              {f.recommendation}
+                            </p>
                           )}
                         </div>
                       )}

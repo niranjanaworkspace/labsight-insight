@@ -286,9 +286,19 @@ export const patternCategories = [
     status: "significant" as Status,
     count: 1,
   },
-  { label: "Metabolic markers", detail: "1 review recommended", status: "review" as Status, count: 1 },
+  {
+    label: "Metabolic markers",
+    detail: "1 review recommended",
+    status: "review" as Status,
+    count: 1,
+  },
   { label: "Hematology", detail: "1 review, 2 stable", status: "review" as Status, count: 3 },
-  { label: "Vitamins & minerals", detail: "Low-range plateau", status: "stable" as Status, count: 1 },
+  {
+    label: "Vitamins & minerals",
+    detail: "Low-range plateau",
+    status: "stable" as Status,
+    count: 1,
+  },
   { label: "Renal & electrolytes", detail: "All stable", status: "stable" as Status, count: 3 },
 ];
 

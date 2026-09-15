@@ -1,7 +1,7 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
-const supabaseUrl = import.meta.env['VITE_SUPABASE_URL'];
-const supabaseAnonKey = import.meta.env['VITE_SUPABASE_ANON_KEY'];
+const supabaseUrl = import.meta.env["VITE_SUPABASE_URL"];
+const supabaseAnonKey = import.meta.env["VITE_SUPABASE_ANON_KEY"];
 
 // The prototype runs fully on local demo data. A real client is only created
 // when credentials are present, so the app never crashes without a backend.

@@ -1,5 +1,11 @@
 import { supabase } from "@/lib/supabase";
-import type { Status } from "@/lib/labsight-data";
+import { isDemoMode } from "@/lib/mock-auth";
+import {
+  findings as demoFindings,
+  parameters as demoParameters,
+  trendRows as demoTrendRows,
+  type Status,
+} from "@/lib/labsight-data";
 
 export interface DashboardStats {
   reportsCount: number;
@@ -64,26 +70,40 @@ const EMPTY_DASHBOARD: DashboardData = {
 };
 
 export async function fetchDashboardData(): Promise<DashboardData> {
-  if (!supabase) return EMPTY_DASHBOARD;
+  if (!supabase) {
+    if (isDemoMode()) return getDemoDashboardData();
+    return EMPTY_DASHBOARD;
+  }
   const {
     data: { user },
   } = await supabase.auth.getUser();
+
   if (!user) {
-    return {
-      stats: { reportsCount: 0, parametersTracked: 0, changesDetected: 0, stableParameters: 0 },
-      findings: [],
-      anomalies: [],
-      trendRows: [],
-      parameters: [],
-      latestReportDate: null,
-    };
+    if (isDemoMode()) return getDemoDashboardData();
+    return EMPTY_DASHBOARD;
   }
 
   const [reportsRes, labResultsRes, analysisRes, anomaliesRes] = await Promise.all([
-    supabase.from("reports").select("id, title, report_date, status, summary").order("report_date", { ascending: true }),
-    supabase.from("lab_results").select("id, report_id, parameter_key, parameter_name, value, unit, reference_range, status, created_at").order("created_at", { ascending: true }),
-    supabase.from("analysis").select("id, headline, status, change_label, confidence, reasons, recommendation, parameter_name, report_id").order("created_at", { ascending: false }),
-    supabase.from("anomalies").select("id, parameter_key, parameter_name, anomaly_type, severity, description, report_id").order("created_at", { ascending: false }),
+    supabase
+      .from("reports")
+      .select("id, title, report_date, status, summary")
+      .order("report_date", { ascending: true }),
+    supabase
+      .from("lab_results")
+      .select(
+        "id, report_id, parameter_key, parameter_name, value, unit, reference_range, status, created_at",
+      )
+      .order("created_at", { ascending: true }),
+    supabase
+      .from("analysis")
+      .select(
+        "id, headline, status, change_label, confidence, reasons, recommendation, parameter_name, report_id",
+      )
+      .order("created_at", { ascending: false }),
+    supabase
+      .from("anomalies")
+      .select("id, parameter_key, parameter_name, anomaly_type, severity, description, report_id")
+      .order("created_at", { ascending: false }),
   ]);
 
   const reports = reportsRes.data ?? [];
@@ -167,5 +187,44 @@ export async function fetchDashboardData(): Promise<DashboardData> {
     trendRows,
     parameters,
     latestReportDate,
+  };
+}
+
+function getDemoDashboardData(): DashboardData {
+  const anomalies: AnomalyItem[] = demoParameters
+    .filter((p) => p.status !== "stable")
+    .map((p, idx) => ({
+      id: `demo-anomaly-${idx}`,
+      parameter_key: p.key,
+      parameter_name: p.name,
+      anomaly_type: `${p.direction === "up" ? "+" : "-"}${Math.abs(p.changePct)}%`,
+      severity: p.status,
+      description: p.note,
+    }));
+
+  return {
+    stats: {
+      reportsCount: 3,
+      parametersTracked: demoParameters.length,
+      changesDetected: anomalies.length,
+      stableParameters: demoParameters.length - anomalies.length,
+    },
+    findings: demoFindings.map((f, idx) => ({
+      id: `demo-finding-${idx}`,
+      headline: f.headline,
+      status: f.status,
+      change_label: f.changeLabel,
+      reasons: f.reasons,
+      recommendation: f.recommendation,
+      parameter_name: f.parameter,
+    })),
+    anomalies,
+    trendRows: demoTrendRows,
+    parameters: demoParameters.map((p) => ({
+      key: p.key,
+      name: p.name,
+      unit: p.unit,
+    })),
+    latestReportDate: "Sep 13, 2026",
   };
 }

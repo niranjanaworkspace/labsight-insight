@@ -1,4 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { enterDemoMode } from "@/lib/mock-auth";
 import {
   ArrowRight,
   ArrowUpRight,
@@ -68,11 +69,31 @@ const COMPARISON = [
 ];
 
 const STEPS = [
-  { icon: Upload, title: "Upload your reports", body: "Add PDF, CSV or TXT lab reports from any laboratory." },
-  { icon: FileSearch, title: "Values extracted", body: "Parameters, units and reference ranges are read from each report." },
-  { icon: GitCompareArrows, title: "History compared", body: "Each parameter is aligned across every date you've uploaded." },
-  { icon: Sparkles, title: "Patterns detected", body: "Directional movement and significant changes are identified." },
-  { icon: Eye, title: "Review with your doctor", body: "Take a clear summary into your next appointment." },
+  {
+    icon: Upload,
+    title: "Upload your reports",
+    body: "Add PDF, CSV or TXT lab reports from any laboratory.",
+  },
+  {
+    icon: FileSearch,
+    title: "Values extracted",
+    body: "Parameters, units and reference ranges are read from each report.",
+  },
+  {
+    icon: GitCompareArrows,
+    title: "History compared",
+    body: "Each parameter is aligned across every date you've uploaded.",
+  },
+  {
+    icon: Sparkles,
+    title: "Patterns detected",
+    body: "Directional movement and significant changes are identified.",
+  },
+  {
+    icon: Eye,
+    title: "Review with your doctor",
+    body: "Take a clear summary into your next appointment.",
+  },
 ];
 
 function Landing() {
@@ -124,6 +145,7 @@ function Landing() {
               </Link>
               <Link
                 to="/dashboard"
+                onClick={enterDemoMode}
                 className="inline-flex items-center gap-2 rounded-xl border border-white/15 bg-white/[0.04] px-5 py-3 text-sm font-semibold transition-colors hover:border-primary/35 hover:bg-white/[0.07]"
               >
                 Explore Demo
@@ -219,14 +241,15 @@ function Landing() {
 
         {/* How it works */}
         <section className="py-12">
-          <SectionHeading eyebrow="How it works" title="From upload to conversation in five steps" />
+          <SectionHeading
+            eyebrow="How it works"
+            title="From upload to conversation in five steps"
+          />
           <div className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
             {STEPS.map(({ icon: Icon, title, body }, i) => (
               <GlassCard key={title} hover className="p-5">
                 <div className="flex items-center gap-2">
-                  <span className="font-display text-xs font-bold text-primary">
-                    0{i + 1}
-                  </span>
+                  <span className="font-display text-xs font-bold text-primary">0{i + 1}</span>
                   <Icon className="h-4 w-4 text-accent" aria-hidden />
                 </div>
                 <h3 className="mt-3 text-sm font-bold">{title}</h3>
@@ -248,9 +271,18 @@ function Landing() {
             </div>
             <ul className="space-y-4">
               {[
-                { icon: Lock, text: "Reports are processed for your account only and never sold or shared." },
-                { icon: ShieldCheck, text: "Encrypted in transit and at rest, with access limited to you." },
-                { icon: Eye, text: "Export or delete your full history at any time from Settings." },
+                {
+                  icon: Lock,
+                  text: "Reports are processed for your account only and never sold or shared.",
+                },
+                {
+                  icon: ShieldCheck,
+                  text: "Encrypted in transit and at rest, with access limited to you.",
+                },
+                {
+                  icon: Eye,
+                  text: "Export or delete your full history at any time from Settings.",
+                },
               ].map(({ icon: Icon, text }) => (
                 <li key={text} className="flex gap-3 text-sm">
                   <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-primary/12 text-primary">
@@ -285,6 +317,7 @@ function Landing() {
               </Link>
               <Link
                 to="/dashboard"
+                onClick={enterDemoMode}
                 className="inline-flex items-center gap-2 rounded-xl border border-white/15 bg-white/[0.04] px-5 py-3 text-sm font-semibold transition-colors hover:border-primary/35"
               >
                 Explore Demo

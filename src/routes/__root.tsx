@@ -78,17 +78,16 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "LABSIGHT AI — See the change, not just the number" },
+      { title: "LabSight Insight — See the change, not just the number" },
       {
         name: "description",
-        content:
-          "LABSIGHT AI compares your lab reports over time and highlights patterns worth reviewing with a healthcare professional.",
+        content: "Intelligent lab test analysis and health biomarker tracking platform.",
       },
-      { name: "author", content: "LABSIGHT AI" },
-      { property: "og:title", content: "LABSIGHT AI" },
+      { name: "author", content: "LabSight Insight" },
+      { property: "og:title", content: "LabSight Insight" },
       {
         property: "og:description",
-        content: "Pattern detection across your lab report history.",
+        content: "Intelligent lab test analysis and health biomarker tracking platform.",
       },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },

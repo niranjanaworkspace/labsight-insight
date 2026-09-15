@@ -3,6 +3,7 @@
 Build the complete frontend prototype for LABSIGHT AI, a modern healthcare AI web application. Follow these specifications:
 
 1. THEME & DESIGN SYSTEM:
+
 - Deep navy background (#07111F) with subtle ambient cyan/soft blue radial gradients/glows.
 - Accents: Cool cyan/teal (#36D1C4), soft blue (#5B8DEF). Text: #F8FAFC and #94A3B8.
 - Tasteful glassmorphism: translucent glass cards with backdrop-blur-md/lg, thin borders (border-white/10), soft layered shadows, subtle hover elevation. Highly readable, never neon or overly transparent.
@@ -10,6 +11,7 @@ Build the complete frontend prototype for LABSIGHT AI, a modern healthcare AI we
 - Strictly non-diagnostic clinical decision support language: "Pattern detected", "Significant change", "Review recommended", "Discuss with a qualified healthcare professional". Avoid diagnostic claims.
 
 2. NAVIGATION & ROUTES:
+
 - Landing Page ('/')
 - Login ('/login') & Sign Up ('/signup') with mock authentication and seamless redirection to dashboard
 - Persistent App Layout with Glassmorphism Sidebar (collapsible + mobile responsive hamburger sheet) for:
@@ -22,10 +24,12 @@ Build the complete frontend prototype for LABSIGHT AI, a modern healthcare AI we
   - Settings / Profile ('/settings')
 
 3. MOCK DATA (stored in a central state/data file):
+
 - 3 realistic lab reports across time: Jan 12, 2026; Apr 18, 2026; Sep 13, 2026.
 - Parameters: TSH (3.2 -> 4.1 -> 5.8 mIU/L, +81.3% significant progressive upward), Hemoglobin (12.8 -> 12.5 -> 11.2 g/dL, -12.5% review downward), Vitamin D (24 -> 25 -> 26 ng/mL, +8.3% stable), WBC (6800 -> 7100 -> 7300 cells/µL, stable), Platelets (240k -> 245k -> 238k, stable), Glucose (92 -> 104 -> 118 mg/dL, upward deviation review), Creatinine (0.9 -> 0.92 -> 0.95, stable), Sodium, Potassium.
 
 4. PAGE DETAILS:
+
 - Landing Page: Hero with headline "See the change, not just the number.", animated glass preview panel showing TSH/Hemoglobin trends, CTAs ("Analyze My Reports", "Explore Demo"), Detect/Compare/Understand feature cards, Traditional vs LABSIGHT AI comparison, 5-step "How it works", Privacy section, Medical Disclaimer, and footer.
 - Dashboard: Greeting "Good morning 👋", last analyzed date, 4 summary stat cards (Reports Analyzed: 3, Parameters Tracked: 24, Changes Detected: 5, Stable Parameters: 19), "Latest Analysis" findings with expandable cards, interactive parameter trend preview chart (Recharts with TSH, Hemoglobin, Vitamin D, WBC toggle), and "Patterns Detected" summary categories.
 - Upload Report: Drag & drop glass zone (PDF/CSV/TXT). On drop or file select, simulate step-by-step progress: 1) Uploading... 2) Extracting laboratory values... 3) Comparing historical results... 4) Analyzing patterns... then show "Report ready for analysis" with "View Analysis" button linking to /analysis.
@@ -36,6 +40,7 @@ Build the complete frontend prototype for LABSIGHT AI, a modern healthcare AI we
 - Settings: Profile info (Name, Email), Preferences (Analysis notifications, alert thresholds), Privacy & Data management, About LABSIGHT AI, and Mock Logout button.
 
 5. POLISH:
+
 - Fully responsive across desktop, tablet, and mobile.
 - Lucide-react icons, Tailwind CSS styling, Recharts for charts, Sonner/Toast for notifications. Smooth micro-interactions and transitions.
 
