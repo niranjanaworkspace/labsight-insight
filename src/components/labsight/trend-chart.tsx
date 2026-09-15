@@ -20,6 +20,12 @@ export const SERIES_COLORS = [
   "var(--muted-foreground)",
 ];
 
+export interface ChartParamMeta {
+  key: string;
+  name: string;
+  unit: string;
+}
+
 function GlassTooltip({ active, payload, label }: any) {
   if (!active || !payload?.length) return null;
   return (
@@ -27,7 +33,9 @@ function GlassTooltip({ active, payload, label }: any) {
       <p className="mb-1.5 font-semibold text-foreground">{label}</p>
       <div className="space-y-1">
         {payload.map((item: any) => {
-          const p = byKey(item.dataKey);
+          const meta = paramMetaLookup.get(item.dataKey);
+          const name = meta?.name ?? item.dataKey;
+          const unit = meta?.unit ?? "";
           return (
             <div key={item.dataKey} className="flex items-center gap-2">
               <span
@@ -35,9 +43,9 @@ function GlassTooltip({ active, payload, label }: any) {
                 style={{ backgroundColor: item.color }}
                 aria-hidden
               />
-              <span className="text-muted-foreground">{p?.name ?? item.dataKey}</span>
+              <span className="text-muted-foreground">{name}</span>
               <span className="ml-auto font-semibold text-foreground">
-                {Number(item.value).toLocaleString()} {p?.unit}
+                {Number(item.value).toLocaleString()} {unit}
               </span>
             </div>
           );
@@ -47,20 +55,36 @@ function GlassTooltip({ active, payload, label }: any) {
   );
 }
 
+let paramMetaLookup: Map<string, ChartParamMeta> = new Map();
+
 export function TrendChart({
   keys,
   height = 300,
   area = false,
+  data,
+  paramMeta,
 }: {
   keys: string[];
   height?: number;
   area?: boolean;
+  data?: Record<string, string | number>[];
+  paramMeta?: ChartParamMeta[];
 }) {
+  const chartData = data ?? trendRows;
+
+  if (paramMeta) {
+    paramMetaLookup = new Map(paramMeta.map((p) => [p.key, p]));
+  } else {
+    paramMetaLookup = new Map();
+  }
+
   const axis = { stroke: "var(--muted-foreground)", fontSize: 12 };
-  // Parameters live on very different scales (TSH ~5 vs platelets ~240k), so
-  // small-magnitude series are plotted against a secondary right-hand axis.
-  const maxOf = (k: string) => Math.max(...byKey(k).values);
-  const globalMax = Math.max(...keys.map(maxOf));
+
+  const maxOf = (k: string) => {
+    const vals = chartData.map((r) => Number(r[k] ?? 0)).filter((v) => !isNaN(v));
+    return vals.length > 0 ? Math.max(...vals) : 0;
+  };
+  const globalMax = Math.max(...keys.map(maxOf), 1);
   const axisIdFor = (k: string) => (maxOf(k) < globalMax / 8 ? "right" : "left");
   const hasRight = keys.some((k) => axisIdFor(k) === "right");
 
@@ -68,7 +92,7 @@ export function TrendChart({
     <div style={{ width: "100%", height }}>
       <ResponsiveContainer width="100%" height="100%">
         {area ? (
-          <AreaChart data={trendRows} margin={{ top: 10, right: 12, left: -8, bottom: 0 }}>
+          <AreaChart data={chartData} margin={{ top: 10, right: 12, left: -8, bottom: 0 }}>
             <defs>
               {keys.map((k, i) => (
                 <linearGradient key={k} id={`fill-${k}`} x1="0" y1="0" x2="0" y2="1">
@@ -115,7 +139,7 @@ export function TrendChart({
             ))}
           </AreaChart>
         ) : (
-          <LineChart data={trendRows} margin={{ top: 10, right: 12, left: -8, bottom: 0 }}>
+          <LineChart data={chartData} margin={{ top: 10, right: 12, left: -8, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 6" stroke="var(--border)" vertical={false} />
             <XAxis dataKey="date" tickLine={false} axisLine={false} {...axis} />
             <YAxis yAxisId="left" tickLine={false} axisLine={false} width={54} {...axis} />
