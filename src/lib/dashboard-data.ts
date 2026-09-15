@@ -54,7 +54,17 @@ function normalizeStatus(value: string | null): Status {
   return "stable";
 }
 
+const EMPTY_DASHBOARD: DashboardData = {
+  stats: { reportsCount: 0, parametersTracked: 0, changesDetected: 0, stableParameters: 0 },
+  findings: [],
+  anomalies: [],
+  trendRows: [],
+  parameters: [],
+  latestReportDate: null,
+};
+
 export async function fetchDashboardData(): Promise<DashboardData> {
+  if (!supabase) return EMPTY_DASHBOARD;
   const {
     data: { user },
   } = await supabase.auth.getUser();
