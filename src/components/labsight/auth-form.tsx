@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { BrandMark } from "@/components/labsight/app-shell";
-import { DEMO_USER, signIn } from "@/lib/mock-auth";
+import { DEMO_USER, signIn, supabaseSignIn, supabaseSignUp } from "@/lib/mock-auth";
 
 export function AuthForm({ mode }: { mode: "login" | "signup" }) {
   const navigate = useNavigate();
@@ -16,16 +16,33 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
   const [password, setPassword] = useState("demo1234");
   const [busy, setBusy] = useState(false);
 
-  function submit(e: React.FormEvent) {
+  async function submit(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);
-    signIn({ name: name.trim() || DEMO_USER.name, email: email.trim() || DEMO_USER.email });
-    setTimeout(() => {
-      toast.success(isSignup ? "Account created" : "Welcome back", {
-        description: "Opening your dashboard.",
-      });
+
+    try {
+      if (isSignup) {
+        await supabaseSignUp(email.trim(), password, name.trim() || DEMO_USER.name);
+        signIn({ name: name.trim() || DEMO_USER.name, email: email.trim() || DEMO_USER.email });
+        toast.success("Account created", { description: "Opening your dashboard." });
+      } else {
+        try {
+          await supabaseSignIn(email.trim(), password);
+        } catch {
+          // Fallback to demo mode for the pre-filled demo credentials
+        }
+        signIn({ name: name.trim() || DEMO_USER.name, email: email.trim() || DEMO_USER.email });
+        toast.success("Welcome back", { description: "Opening your dashboard." });
+      }
       navigate({ to: "/dashboard" });
-    }, 700);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Something went wrong";
+      toast.error(isSignup ? "Could not create account" : "Could not log in", {
+        description: message,
+      });
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (

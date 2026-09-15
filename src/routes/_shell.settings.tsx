@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Slider } from "@/components/ui/slider";
-import { DEMO_USER, getUser, signOut } from "@/lib/mock-auth";
+import { DEMO_USER, getUser, signOut, supabaseSignOut } from "@/lib/mock-auth";
 
 export const Route = createFileRoute("/_shell/settings")({
   head: () => ({
@@ -150,7 +150,8 @@ function SettingsPage() {
       <Button
         variant="outline"
         className="w-full font-semibold sm:w-auto"
-        onClick={() => {
+        onClick={async () => {
+          await supabaseSignOut();
           signOut();
           toast.success("Signed out");
           navigate({ to: "/" });

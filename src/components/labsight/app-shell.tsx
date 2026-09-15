@@ -16,7 +16,7 @@ import {
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { DEMO_USER, getUser, signOut } from "@/lib/mock-auth";
+import { DEMO_USER, getUser, signOut, supabaseSignOut } from "@/lib/mock-auth";
 import { toast } from "sonner";
 
 const NAV = [
@@ -110,7 +110,8 @@ function SidebarBody({
           </div>
         )}
         <button
-          onClick={() => {
+          onClick={async () => {
+            await supabaseSignOut();
             signOut();
             toast.success("Signed out");
             navigate({ to: "/" });
