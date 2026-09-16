@@ -108,6 +108,54 @@ Extraction Rules:
    - Do NOT invent or hallucinate test results not present in the document.
    - If the document is unreadable or does not contain lab test results, return an empty array for laboratory_results.`;
 
+function isTransientGeminiError(error: unknown): boolean {
+  if (!error) return false;
+  const str = error instanceof Error ? error.message : String(error);
+  const errObj = error as { status?: string | number; code?: number };
+  if (errObj.status === "UNAVAILABLE" || errObj.status === 503 || errObj.code === 503) {
+    return true;
+  }
+  if (errObj.status === "RESOURCE_EXHAUSTED" || errObj.status === 429 || errObj.code === 429) {
+    return true;
+  }
+  const lower = str.toLowerCase();
+  return (
+    lower.includes("503") ||
+    lower.includes("429") ||
+    lower.includes("unavailable") ||
+    lower.includes("high demand") ||
+    lower.includes("resource_exhausted") ||
+    lower.includes("spikes in demand") ||
+    lower.includes("overloaded") ||
+    lower.includes("rate limit") ||
+    lower.includes("quota exceeded") ||
+    lower.includes("try again later")
+  );
+}
+
+function parseGeminiErrorMessage(error: unknown): string {
+  if (!error) return "Unknown Gemini API error";
+  const raw = error instanceof Error ? error.message : String(error);
+
+  try {
+    const jsonMatch = raw.match(/\{[\s\S]*"error"[\s\S]*\}/);
+    if (jsonMatch) {
+      const parsed = JSON.parse(jsonMatch[0]);
+      if (parsed?.error?.message) {
+        return parsed.error.message;
+      }
+    }
+  } catch {
+    // Ignore JSON parse failure
+  }
+
+  if (isTransientGeminiError(error)) {
+    return "The Gemini AI model is currently experiencing temporary high demand spikes. Please wait a few moments and try again.";
+  }
+
+  return raw;
+}
+
 export async function extractLaboratoryDataFromPdf(
   pdfBuffer: Buffer,
 ): Promise<ExtractedReportData> {
@@ -116,60 +164,73 @@ export async function extractLaboratoryDataFromPdf(
   const base64Pdf = pdfBuffer.toString("base64");
 
   let response;
+  // Prioritize primary flash model, followed by high-throughput lite model and dynamic latest alias
   const modelsToTry = [
-    "gemini-3.6-flash",
-    "gemini-flash-latest",
     "gemini-3.8-flash",
     "gemini-3.1-flash-lite",
+    "gemini-flash-latest",
+    "gemini-3.6-flash",
   ];
   let lastError: unknown = null;
 
-  for (const modelName of modelsToTry) {
-    try {
-      response = await ai.models.generateContent({
-        model: modelName,
-        contents: [
-          {
-            inlineData: {
-              mimeType: "application/pdf",
-              data: base64Pdf,
+  modelLoop: for (const modelName of modelsToTry) {
+    const maxRetriesPerModel = 2; // Up to 3 attempts total per model
+    for (let attempt = 0; attempt <= maxRetriesPerModel; attempt++) {
+      try {
+        response = await ai.models.generateContent({
+          model: modelName,
+          contents: [
+            {
+              inlineData: {
+                mimeType: "application/pdf",
+                data: base64Pdf,
+              },
             },
+            {
+              text: "Analyze this laboratory report PDF. Extract the report collection date and all laboratory test results in strict JSON conforming to the schema.",
+            },
+          ],
+          config: {
+            systemInstruction: SYSTEM_INSTRUCTION,
+            responseMimeType: "application/json",
+            responseSchema: reportExtractionSchema,
+            temperature: 0.1,
           },
-          {
-            text: "Analyze this laboratory report PDF. Extract the report collection date and all laboratory test results in strict JSON conforming to the schema.",
-          },
-        ],
-        config: {
-          systemInstruction: SYSTEM_INSTRUCTION,
-          responseMimeType: "application/json",
-          responseSchema: reportExtractionSchema,
-          temperature: 0.1,
-        },
-      });
-      if (response?.text) {
-        break;
-      }
-    } catch (apiError: unknown) {
-      lastError = apiError;
-      console.warn(
-        `Gemini extraction attempt with ${modelName} failed, trying alternative model if available...`,
-        apiError,
-      );
-      // If 503 (high demand) or 429 (rate limit), pause briefly before trying next candidate
-      const isTransient =
-        apiError instanceof Error &&
-        (apiError.message.includes("503") ||
-          apiError.message.includes("429") ||
-          apiError.message.includes("high demand") ||
-          apiError.message.includes("RESOURCE_EXHAUSTED"));
-      if (isTransient) {
-        await new Promise((resolve) => setTimeout(resolve, 600));
+        });
+        if (response?.text) {
+          break modelLoop;
+        }
+      } catch (apiError: unknown) {
+        lastError = apiError;
+        const transient = isTransientGeminiError(apiError);
+
+        if (transient && attempt < maxRetriesPerModel) {
+          const baseDelay = (attempt + 1) * 1500;
+          const jitter = Math.floor(Math.random() * 500);
+          const backoffDelay = baseDelay + jitter;
+          console.warn(
+            `Gemini extraction with ${modelName} encountered transient error (attempt ${attempt + 1}/${maxRetriesPerModel + 1}). Retrying in ${backoffDelay}ms...`,
+          );
+          await new Promise((resolve) => setTimeout(resolve, backoffDelay));
+          continue;
+        }
+
+        console.warn(
+          `Gemini extraction with ${modelName} failed after ${attempt + 1} attempt(s), trying next fallback model if available...`,
+          apiError,
+        );
+        if (transient) {
+          await new Promise((resolve) =>
+            setTimeout(resolve, 1000 + Math.floor(Math.random() * 500)),
+          );
+        }
+        break; // Move to next model candidate
       }
     }
   }
 
   if (!response) {
-    const message = lastError instanceof Error ? lastError.message : "Unknown Gemini API error";
+    const message = parseGeminiErrorMessage(lastError);
     throw new Error(`Gemini API error during PDF extraction: ${message}`);
   }
 

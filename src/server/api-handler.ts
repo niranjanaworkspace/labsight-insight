@@ -233,12 +233,27 @@ export async function handleExtractReportRequest(request: Request): Promise<Resp
 
     console.error("[api/extract-report] PDF laboratory extraction error:", extractionError);
 
+    const lower = message.toLowerCase();
+    const isTransient =
+      lower.includes("high demand") ||
+      lower.includes("503") ||
+      lower.includes("unavailable") ||
+      lower.includes("spikes in demand") ||
+      lower.includes("try again") ||
+      lower.includes("429") ||
+      lower.includes("rate limit");
+
+    const userFacingMessage = isTransient
+      ? "The Gemini AI service is currently experiencing temporary high demand spikes. Please click 'Retry Extraction' in a few moments."
+      : `Laboratory extraction pipeline failed: ${message}`;
+
     return jsonResponse(
       {
         success: false,
-        error: `Laboratory extraction pipeline failed: ${message}`,
+        error: userFacingMessage,
+        isTransient,
       },
-      500,
+      isTransient ? 503 : 500,
     );
   }
 }
