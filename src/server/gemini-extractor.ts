@@ -116,7 +116,12 @@ export async function extractLaboratoryDataFromPdf(
   const base64Pdf = pdfBuffer.toString("base64");
 
   let response;
-  const modelsToTry = ["gemini-2.5-flash", "gemini-3.8-flash", "gemini-3.1-flash-lite"];
+  const modelsToTry = [
+    "gemini-3.6-flash",
+    "gemini-flash-latest",
+    "gemini-3.8-flash",
+    "gemini-3.1-flash-lite",
+  ];
   let lastError: unknown = null;
 
   for (const modelName of modelsToTry) {
@@ -150,6 +155,16 @@ export async function extractLaboratoryDataFromPdf(
         `Gemini extraction attempt with ${modelName} failed, trying alternative model if available...`,
         apiError,
       );
+      // If 503 (high demand) or 429 (rate limit), pause briefly before trying next candidate
+      const isTransient =
+        apiError instanceof Error &&
+        (apiError.message.includes("503") ||
+          apiError.message.includes("429") ||
+          apiError.message.includes("high demand") ||
+          apiError.message.includes("RESOURCE_EXHAUSTED"));
+      if (isTransient) {
+        await new Promise((resolve) => setTimeout(resolve, 600));
+      }
     }
   }
 
