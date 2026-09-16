@@ -4,14 +4,9 @@ import {
   AlertCircle,
   Calendar,
   CheckCircle2,
-  ChevronDown,
-  ChevronUp,
   CloudUpload,
-  Code,
-  Copy,
   FileCheck,
   FileText,
-  FlaskConical,
   Loader2,
   Lock,
   LogIn,
@@ -24,6 +19,7 @@ import { GlassCard } from "@/components/labsight/glass-card";
 import { MedicalDisclaimer } from "@/components/labsight/disclaimer";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/lib/supabase";
+import { saveExtractedReport, type SavedReportRecord } from "@/lib/supabase-data";
 import { cn } from "@/lib/utils";
 import type { ExtractReportApiResponse, ExtractedReportData } from "@/types/lab-report";
 
@@ -72,13 +68,14 @@ export function UploadPage() {
   const [extracting, setExtracting] = useState(false);
   const [extractedData, setExtractedData] = useState<ExtractedReportData | null>(null);
   const [extractionError, setExtractionError] = useState<string | null>(null);
-  const [showJsonInspector, setShowJsonInspector] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [savedReport, setSavedReport] = useState<SavedReportRecord | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
   const [locatedVaultFiles, setLocatedVaultFiles] = useState<VaultFileItem[]>([]);
   const [scanningVault, setScanningVault] = useState(false);
-  const [copiedJson, setCopiedJson] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   // Scan the authenticated user's private folder in 'lab-reports' bucket
@@ -103,16 +100,6 @@ export function UploadPage() {
       );
 
       setLocatedVaultFiles(pdfFiles);
-
-      // If user has uploaded files in their vault and no file is currently selected,
-      // pick the most recent uploaded PDF and automatically initiate extraction
-      if (pdfFiles.length > 0) {
-        const latestFile = pdfFiles[0];
-        const latestStoragePath = `${userId}/${latestFile.name}`;
-        setUploadedPath(latestStoragePath);
-        // Automatically trigger extraction on the real uploaded PDF
-        await triggerExtraction(latestStoragePath);
-      }
     } catch (scanErr) {
       console.warn("Exception scanning vault:", scanErr);
     } finally {
@@ -145,7 +132,6 @@ export function UploadPage() {
     return () => {
       isMounted = false;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function handleFileSelection(selectedFile: File | null) {
@@ -234,12 +220,12 @@ export function UploadPage() {
 
       setUploading(false);
       setUploadedPath(targetStoragePath);
-      toast.success("PDF uploaded successfully", {
+      toast.success("Upload complete", {
         description: "Your report has been stored securely in your private vault.",
       });
 
-      // Automatically initiate the backend Gemini extraction pipeline
-      await triggerExtraction(targetStoragePath);
+      // Automatically initiate the backend Gemini extraction and database persistence pipeline
+      await triggerPipeline(targetStoragePath, selectedFile.name);
       // Refresh vault list
       await scanUserVault(user.id);
     } catch (err: unknown) {
@@ -252,7 +238,7 @@ export function UploadPage() {
     }
   }
 
-  async function triggerExtraction(storagePath: string) {
+  async function triggerPipeline(storagePath: string, fileName?: string) {
     if (!supabase) {
       setExtractionError("Supabase client is unavailable.");
       return;
@@ -261,6 +247,11 @@ export function UploadPage() {
     setExtracting(true);
     setExtractionError(null);
     setExtractedData(null);
+    setSaving(false);
+    setSavedReport(null);
+    setSaveError(null);
+
+    let parsedData: ExtractedReportData | null = null;
 
     try {
       const {
@@ -288,6 +279,7 @@ export function UploadPage() {
         throw new Error(errorMsg);
       }
 
+      parsedData = result.data;
       setExtractedData(result.data);
       setExtracting(false);
       toast.success("Extraction successful", {
@@ -300,15 +292,53 @@ export function UploadPage() {
       toast.error("Extraction failed", {
         description: msg,
       });
+      return;
+    }
+
+    // Persist extracted biomarkers directly into public.reports and public.lab_results
+    if (parsedData) {
+      await saveToDatabase(storagePath, parsedData, fileName);
     }
   }
 
-  function copyJsonToClipboard() {
-    if (!extractedData) return;
-    navigator.clipboard.writeText(JSON.stringify(extractedData, null, 2));
-    setCopiedJson(true);
-    toast.success("JSON copied to clipboard");
-    setTimeout(() => setCopiedJson(false), 2000);
+  async function saveToDatabase(storagePath: string, data: ExtractedReportData, fileName?: string) {
+    setSaving(true);
+    setSaveError(null);
+
+    try {
+      const record = await saveExtractedReport({
+        storagePath,
+        extractedData: data,
+        fileName,
+      });
+
+      setSavedReport(record);
+      setSaving(false);
+      toast.success("Database saved", {
+        description: `Saved ${record.parameterCount} biomarkers for report date ${record.reportDate || "detected"}.`,
+      });
+    } catch (saveErr: unknown) {
+      const msg =
+        saveErr instanceof Error ? saveErr.message : "Failed to save results to database.";
+      setSaving(false);
+      setSaveError(msg);
+      toast.error("Database save failed", {
+        description: msg,
+      });
+    }
+  }
+
+  function resetForm() {
+    setFile(null);
+    setUploadedPath(null);
+    setUploadError(null);
+    setExtracting(false);
+    setExtractedData(null);
+    setExtractionError(null);
+    setSaving(false);
+    setSavedReport(null);
+    setSaveError(null);
+    if (inputRef.current) inputRef.current.value = "";
   }
 
   const pipelineStages: PipelineStage[] = [
@@ -317,22 +347,22 @@ export function UploadPage() {
       description: uploading
         ? "Uploading PDF to private storage vault…"
         : uploadedPath
-          ? "Successfully stored in private vault (lab-reports)"
+          ? "Upload complete"
           : uploadError
-            ? "Upload failed"
+            ? `Upload failed: ${uploadError}`
             : "Store PDF in private bucket (lab-reports)",
       status: uploading ? "active" : uploadedPath ? "done" : uploadError ? "error" : "idle",
     },
     {
       title: "Extracting laboratory values",
       description: extracting
-        ? "Downloading PDF from private vault and extracting structured biomarkers with Gemini AI…"
+        ? "Extracting laboratory values with Gemini AI…"
         : extractedData
-          ? `Extraction successful · ${extractedData.laboratory_results.length} tests · Date: ${extractedData.report_date || "Not detected"}`
+          ? "Extraction successful"
           : extractionError
             ? `Extraction failed: ${extractionError}`
             : uploadedPath
-              ? "Ready for Gemini extraction"
+              ? "Ready for extraction"
               : "Pending PDF upload",
       status: extracting
         ? "active"
@@ -345,19 +375,41 @@ export function UploadPage() {
               : "pending_pipeline",
     },
     {
-      title: "Comparing historical results",
-      description: "Pipeline stage not yet connected (database insertion pending)",
-      status: "pending_pipeline",
+      title: "Saving results to database",
+      description: saving
+        ? "Saving results"
+        : savedReport
+          ? "Database saved"
+          : saveError
+            ? `Database save failed: ${saveError}`
+            : extractedData
+              ? "Ready to save"
+              : "Pending extraction",
+      status: saving
+        ? "active"
+        : savedReport
+          ? "done"
+          : saveError
+            ? "error"
+            : extractedData
+              ? "idle"
+              : "pending_pipeline",
     },
     {
-      title: "Analyzing patterns",
-      description: "Pipeline stage not yet connected (database insertion pending)",
+      title: "Longitudinal analysis",
+      description: "Scheduled after baseline reports (no analysis or anomalies created)",
       status: "pending_pipeline",
     },
   ];
 
   const hasVaultOrUpload = Boolean(
-    file || uploadedPath || locatedVaultFiles.length > 0 || extractedData || extractionError,
+    file ||
+    uploadedPath ||
+    locatedVaultFiles.length > 0 ||
+    extractedData ||
+    extractionError ||
+    savedReport ||
+    saveError,
   );
 
   return (
@@ -452,10 +504,10 @@ export function UploadPage() {
                     <Button
                       size="sm"
                       variant={isCurrent ? "default" : "outline"}
-                      disabled={extracting}
+                      disabled={extracting || saving}
                       onClick={() => {
                         setUploadedPath(fullPath);
-                        triggerExtraction(fullPath);
+                        triggerPipeline(fullPath, vf.name);
                       }}
                       className="h-7 text-xs font-semibold gap-1.5"
                     >
@@ -464,10 +516,15 @@ export function UploadPage() {
                           <Loader2 className="h-3 w-3 animate-spin" />
                           Extracting…
                         </>
+                      ) : saving && isCurrent ? (
+                        <>
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                          Saving…
+                        </>
                       ) : (
                         <>
                           <RotateCw className="h-3 w-3" />
-                          {extractedData && isCurrent ? "Re-extract" : "Extract with Gemini"}
+                          {savedReport && isCurrent ? "Re-process" : "Extract & Save"}
                         </>
                       )}
                     </Button>
@@ -553,19 +610,37 @@ export function UploadPage() {
 
             {/* Clear Status Badges */}
             <div>
-              {extractedData && (
+              {savedReport && (
+                <div className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-xs font-semibold text-emerald-400">
+                  <CheckCircle2 className="h-4 w-4" />
+                  <span>Database saved</span>
+                </div>
+              )}
+              {saveError && !savedReport && (
+                <div className="inline-flex items-center gap-1.5 rounded-full border border-alert/30 bg-alert/10 px-3 py-1 text-xs font-semibold text-alert">
+                  <AlertCircle className="h-4 w-4" />
+                  <span>Database save failed</span>
+                </div>
+              )}
+              {saving && (
+                <div className="inline-flex items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs font-semibold text-primary">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  <span>Saving results…</span>
+                </div>
+              )}
+              {!saving && !savedReport && !saveError && extractedData && (
                 <div className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-xs font-semibold text-emerald-400">
                   <CheckCircle2 className="h-4 w-4" />
                   <span>Extraction successful</span>
                 </div>
               )}
-              {extractionError && (
+              {!saving && !savedReport && !saveError && extractionError && (
                 <div className="inline-flex items-center gap-1.5 rounded-full border border-alert/30 bg-alert/10 px-3 py-1 text-xs font-semibold text-alert">
                   <AlertCircle className="h-4 w-4" />
                   <span>Extraction failed</span>
                 </div>
               )}
-              {extracting && (
+              {!saving && !savedReport && !saveError && extracting && (
                 <div className="inline-flex items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs font-semibold text-primary">
                   <Loader2 className="h-4 w-4 animate-spin" />
                   <span>Extracting with Gemini…</span>
@@ -619,17 +694,20 @@ export function UploadPage() {
             <div
               className="h-full rounded-full bg-gradient-to-r from-primary to-accent transition-[width] duration-500"
               style={{
-                width: uploadError
-                  ? "10%"
-                  : uploading
-                    ? "25%"
-                    : extracting
-                      ? "65%"
-                      : extractedData
-                        ? "100%"
-                        : uploadedPath
-                          ? "50%"
-                          : "0%",
+                width:
+                  uploadError || extractionError || saveError
+                    ? "15%"
+                    : uploading
+                      ? "25%"
+                      : extracting
+                        ? "50%"
+                        : saving
+                          ? "75%"
+                          : savedReport
+                            ? "100%"
+                            : uploadedPath
+                              ? "35%"
+                              : "0%",
               }}
             />
           </div>
@@ -648,7 +726,17 @@ export function UploadPage() {
                   <span className="inline-flex items-center rounded-md border border-white/10 bg-white/5 px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
                     Bucket: lab-reports
                   </span>
-                  {extracting ? (
+                  {saving ? (
+                    <span className="inline-flex items-center gap-1 rounded-md border border-primary/30 bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary">
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                      Saving to database…
+                    </span>
+                  ) : savedReport ? (
+                    <span className="inline-flex items-center gap-1 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium text-emerald-400">
+                      <CheckCircle2 className="h-3 w-3" />
+                      Database saved ({savedReport.parameterCount} biomarkers)
+                    </span>
+                  ) : extracting ? (
                     <span className="inline-flex items-center gap-1 rounded-md border border-primary/30 bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary">
                       <Loader2 className="h-3 w-3 animate-spin" />
                       Gemini extraction in progress…
@@ -682,7 +770,7 @@ export function UploadPage() {
             </div>
           )}
 
-          {/* Failure state with explicit error details - strictly NO mock fallback */}
+          {/* Failure state for extraction */}
           {extractionError && (
             <div className="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-alert/25 bg-alert/[0.07] p-4">
               <div className="flex items-start gap-3 min-w-0 flex-1">
@@ -703,7 +791,7 @@ export function UploadPage() {
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => triggerExtraction(uploadedPath)}
+                  onClick={() => triggerPipeline(uploadedPath, file?.name)}
                   className="gap-1.5 text-xs font-semibold"
                 >
                   <RotateCw className="h-3.5 w-3.5" />
@@ -713,143 +801,95 @@ export function UploadPage() {
             </div>
           )}
 
-          {/* ACTUAL Gemini Extraction Results Display */}
-          {extractedData && (
-            <div className="mt-5 space-y-4 rounded-2xl border border-primary/25 bg-primary/[0.03] p-4 sm:p-5">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div className="flex items-center gap-2.5">
-                  <span className="grid h-8 w-8 place-items-center rounded-xl bg-primary/15 text-primary">
-                    <FlaskConical className="h-4 w-4" />
-                  </span>
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <p className="text-sm font-bold text-foreground">
-                        Actual Gemini Extraction Results
-                      </p>
-                      <span className="rounded-full border border-emerald-500/30 bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold text-emerald-400">
-                        Extraction successful
-                      </span>
-                    </div>
-                    <p className="text-xs text-muted-foreground">
-                      Structured biomarkers parsed directly from the uploaded PDF document
-                    </p>
-                  </div>
-                </div>
+          {/* Saving state */}
+          {saving && (
+            <div className="mt-5 flex items-center gap-3 rounded-2xl border border-primary/25 bg-primary/[0.06] p-4">
+              <Loader2 className="h-5 w-5 shrink-0 animate-spin text-primary" aria-hidden />
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-semibold text-foreground">Saving results to database…</p>
+                <p className="text-xs text-muted-foreground">
+                  Writing report record to public.reports and biomarkers to public.lab_results.
+                </p>
+              </div>
+            </div>
+          )}
 
-                <div className="flex flex-wrap items-center gap-2 text-xs">
-                  {/* Extracted Report Date */}
-                  <div className="flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-2.5 py-1 text-foreground/90 font-medium">
-                    <Calendar className="h-3.5 w-3.5 text-primary" />
-                    <span>Report Date:</span>
-                    <span className="font-semibold text-foreground">
-                      {extractedData.report_date || "Not detected"}
-                    </span>
-                  </div>
-                  <span className="rounded-lg border border-primary/30 bg-primary/10 px-2.5 py-1 font-semibold text-primary">
-                    {extractedData.laboratory_results.length} parameters extracted
-                  </span>
+          {/* Failure state for database save */}
+          {saveError && (
+            <div className="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-alert/25 bg-alert/[0.07] p-4">
+              <div className="flex items-start gap-3 min-w-0 flex-1">
+                <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-alert" aria-hidden />
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-semibold text-alert">Database save failed</p>
+                  <p className="mt-0.5 text-xs text-muted-foreground break-words">{saveError}</p>
+                </div>
+              </div>
+              {extractedData && uploadedPath && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => saveToDatabase(uploadedPath, extractedData, file?.name)}
+                  className="gap-1.5 text-xs font-semibold"
+                >
+                  <RotateCw className="h-3.5 w-3.5" />
+                  Retry Save
+                </Button>
+              )}
+            </div>
+          )}
+
+          {/* Simple Success Display: Report Date, Parameter Count, Navigation (No technical details / JSON / raw table) */}
+          {savedReport && (
+            <div className="mt-5 space-y-4 rounded-2xl border border-emerald-500/30 bg-emerald-500/[0.04] p-5">
+              <div className="flex items-center gap-3">
+                <span className="grid h-10 w-10 place-items-center rounded-xl bg-emerald-500/15 text-emerald-400">
+                  <CheckCircle2 className="h-5 w-5" />
+                </span>
+                <div>
+                  <h3 className="text-base font-bold text-foreground">Database saved</h3>
+                  <p className="text-xs text-muted-foreground">
+                    Your laboratory report and clinical biomarkers have been securely stored in your
+                    personal health record.
+                  </p>
                 </div>
               </div>
 
-              {/* Informative stage notice: no database rows inserted */}
-              <div className="rounded-xl border border-white/10 bg-white/[0.02] p-3 text-xs text-muted-foreground">
-                <span className="font-semibold text-foreground">Schema Safeguard Active:</span> Raw
-                PDF extraction verified. In strict compliance with guidelines, no rows have been
-                inserted into <code className="font-mono text-primary">reports</code>,{" "}
-                <code className="font-mono text-primary">lab_results</code>,{" "}
-                <code className="font-mono text-primary">analysis</code>, or{" "}
-                <code className="font-mono text-primary">anomalies</code>.
-              </div>
-
-              {/* Extracted Laboratory Results Table: exactly displays Test name, Standardized name, Value, Unit, Reference min, Reference max */}
-              <div className="overflow-x-auto rounded-xl border border-white/10 bg-black/20">
-                <table className="w-full text-left text-xs">
-                  <thead>
-                    <tr className="border-b border-white/10 bg-white/[0.03] text-muted-foreground">
-                      <th className="px-3 py-2.5 font-semibold">Test Name</th>
-                      <th className="px-3 py-2.5 font-semibold">Standardized Name</th>
-                      <th className="px-3 py-2.5 font-semibold">Value</th>
-                      <th className="px-3 py-2.5 font-semibold">Unit</th>
-                      <th className="px-3 py-2.5 font-semibold">Reference Min</th>
-                      <th className="px-3 py-2.5 font-semibold">Reference Max</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-white/5">
-                    {extractedData.laboratory_results.map((result, idx) => {
-                      return (
-                        <tr
-                          key={`${result.standardized_name}-${idx}`}
-                          className="hover:bg-white/[0.02]"
-                        >
-                          {/* Test name */}
-                          <td className="px-3 py-2 font-medium text-foreground">
-                            {result.test_name}
-                          </td>
-                          {/* Standardized name */}
-                          <td className="px-3 py-2">
-                            <span className="font-mono text-[11px] text-primary/90">
-                              {result.standardized_name}
-                            </span>
-                          </td>
-                          {/* Value */}
-                          <td className="px-3 py-2 font-semibold text-foreground font-mono">
-                            {result.value !== null ? result.value : "—"}
-                          </td>
-                          {/* Unit */}
-                          <td className="px-3 py-2 text-muted-foreground font-mono">
-                            {result.unit || "—"}
-                          </td>
-                          {/* Reference minimum */}
-                          <td className="px-3 py-2 text-muted-foreground font-mono">
-                            {result.reference_min !== null ? result.reference_min : "—"}
-                          </td>
-                          {/* Reference maximum */}
-                          <td className="px-3 py-2 text-muted-foreground font-mono">
-                            {result.reference_max !== null ? result.reference_max : "—"}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-
-              {/* Strict JSON Output Inspector */}
-              <div className="pt-1 flex flex-col gap-2">
-                <div className="flex items-center justify-between">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setShowJsonInspector((prev) => !prev)}
-                    className="gap-2 text-xs text-muted-foreground hover:text-foreground"
-                  >
-                    <Code className="h-3.5 w-3.5" />
-                    {showJsonInspector ? "Hide Strict JSON Output" : "Inspect Strict JSON Output"}
-                    {showJsonInspector ? (
-                      <ChevronUp className="h-3.5 w-3.5" />
-                    ) : (
-                      <ChevronDown className="h-3.5 w-3.5" />
-                    )}
-                  </Button>
-
-                  {showJsonInspector && (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={copyJsonToClipboard}
-                      className="h-7 gap-1.5 text-xs text-muted-foreground hover:text-foreground"
-                    >
-                      <Copy className="h-3 w-3" />
-                      {copiedJson ? "Copied" : "Copy JSON"}
-                    </Button>
-                  )}
+              <div className="grid grid-cols-2 gap-3 pt-1">
+                <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3.5">
+                  <p className="text-xs text-muted-foreground">Report Date</p>
+                  <p className="mt-1 text-sm font-semibold text-foreground">
+                    {savedReport.reportDate || "Detected from document"}
+                  </p>
                 </div>
+                <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3.5">
+                  <p className="text-xs text-muted-foreground">Biomarkers Saved</p>
+                  <p className="mt-1 text-sm font-semibold text-foreground">
+                    {savedReport.parameterCount} parameters
+                  </p>
+                </div>
+              </div>
 
-                {showJsonInspector && (
-                  <pre className="max-h-80 overflow-auto rounded-xl border border-white/10 bg-black/40 p-3 font-mono text-[11px] leading-relaxed text-muted-foreground">
-                    {JSON.stringify(extractedData, null, 2)}
-                  </pre>
-                )}
+              <div className="flex flex-wrap items-center gap-2.5 pt-2">
+                <Button asChild size="sm" className="gap-2 font-semibold">
+                  <Link to="/reports/$id" params={{ id: savedReport.reportId }}>
+                    <FileText className="h-4 w-4" />
+                    View Report Details
+                  </Link>
+                </Button>
+                <Button asChild variant="outline" size="sm" className="gap-2 font-semibold">
+                  <Link to="/reports">My Reports</Link>
+                </Button>
+                <Button asChild variant="outline" size="sm" className="gap-2 font-semibold">
+                  <Link to="/dashboard">Go to Dashboard</Link>
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={resetForm}
+                  className="text-xs text-muted-foreground hover:text-foreground"
+                >
+                  Upload Another Report
+                </Button>
               </div>
             </div>
           )}

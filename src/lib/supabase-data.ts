@@ -1,5 +1,7 @@
 import { supabase } from "@/lib/supabase";
 import type { Status, Direction } from "@/lib/labsight-data";
+import type { ExtractedReportData } from "@/types/lab-report";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 export interface RealReport {
   id: string;
@@ -355,4 +357,245 @@ export async function getRealTrendsData(): Promise<{
   }
 
   return { parameters, trendRows, reportsCount: reports.length };
+}
+
+export function computeBiomarkerStatus(
+  val: number | null,
+  min: number | null,
+  max: number | null,
+): Status {
+  if (val === null) return "stable";
+  if (min !== null && val < min) {
+    if (max !== null && max > min) {
+      const spread = max - min;
+      if (val < min - 0.25 * spread) return "significant";
+    }
+    return "review";
+  }
+  if (max !== null && val > max) {
+    if (min !== null && max > min) {
+      const spread = max - min;
+      if (val > max + 0.25 * spread) return "significant";
+    }
+    return "review";
+  }
+  return "stable";
+}
+
+export function formatReferenceRange(min: number | null, max: number | null): string | null {
+  if (min !== null && max !== null) {
+    return `${min} – ${max}`;
+  }
+  if (min !== null) {
+    return `≥ ${min}`;
+  }
+  if (max !== null) {
+    return `≤ ${max}`;
+  }
+  return null;
+}
+
+export interface SaveExtractedReportParams {
+  storagePath: string;
+  extractedData: ExtractedReportData;
+  fileName?: string;
+  client?: SupabaseClient;
+}
+
+export interface SavedReportRecord {
+  reportId: string;
+  reportDate: string | null;
+  parameterCount: number;
+  status: Status;
+  isUpdate: boolean;
+}
+
+/**
+ * Persists extracted laboratory report and biomarker items into real Supabase tables:
+ * public.reports and public.lab_results.
+ *
+ * Rules:
+ * - Uses the verified authenticated user UUID from supabase.auth.getUser()
+ * - Strictly respects the actual schema of public.reports and public.lab_results
+ * - Prevents duplicate inserts on retry by updating existing report & replacing lab_results
+ * - Never creates rows in analysis or anomalies tables
+ * - Throws on any database failure so that the caller never displays false success
+ */
+export async function saveExtractedReport({
+  storagePath,
+  extractedData,
+  fileName,
+  client,
+}: SaveExtractedReportParams): Promise<SavedReportRecord> {
+  const activeClient = client || supabase;
+  if (!activeClient) {
+    throw new Error("Supabase client is not available.");
+  }
+
+  // 1. Verify authenticated user identity (never rely on unverified client UUIDs)
+  const {
+    data: { user },
+    error: authError,
+  } = await activeClient.auth.getUser();
+
+  if (authError || !user) {
+    throw new Error("Authenticated user session is required to save reports.");
+  }
+  const userId = user.id;
+
+  // 2. Validate and format report_date (must be valid YYYY-MM-DD for Postgres date or null)
+  let validReportDate: string | null = null;
+  if (extractedData.report_date) {
+    const rawDate = extractedData.report_date.trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(rawDate)) {
+      validReportDate = rawDate;
+    } else {
+      const parsedDate = new Date(rawDate);
+      if (!isNaN(parsedDate.getTime())) {
+        validReportDate = parsedDate.toISOString().slice(0, 10);
+      }
+    }
+  }
+
+  // 3. Compute overall report status based on individual biomarker deviations
+  let reportStatus: Status = "stable";
+  for (const item of extractedData.laboratory_results) {
+    const itemStatus = computeBiomarkerStatus(item.value, item.reference_min, item.reference_max);
+    if (itemStatus === "significant") {
+      reportStatus = "significant";
+      break;
+    } else if (itemStatus === "review") {
+      reportStatus = "review";
+    }
+  }
+
+  // 4. Derive report title and summary
+  const cleanTitle = fileName
+    ? fileName
+        .replace(/\.pdf$/i, "")
+        .replace(/[_-]+/g, " ")
+        .trim()
+    : validReportDate
+      ? `Laboratory Report - ${validReportDate}`
+      : "Clinical Laboratory Report";
+
+  const parameterCount = extractedData.laboratory_results.length;
+  const summary = `Extracted ${parameterCount} biomarkers${
+    validReportDate ? ` from report dated ${validReportDate}` : ""
+  }.`;
+
+  // 5. Prevent duplicate inserts on retry (Requirement 6)
+  // Check if a report with this file_url and user_id already exists in public.reports
+  const { data: existingReport, error: checkError } = await activeClient
+    .from("reports")
+    .select("id")
+    .eq("user_id", userId)
+    .eq("file_url", storagePath)
+    .maybeSingle();
+
+  if (checkError) {
+    console.warn("[saveExtractedReport] Existing report check notice:", checkError.message);
+  }
+
+  let reportId: string;
+  let isUpdate = false;
+
+  if (existingReport?.id) {
+    isUpdate = true;
+    reportId = existingReport.id;
+
+    // Remove any previously inserted lab_results for this report to prevent duplicate rows on retry
+    const { error: deleteResultsError } = await activeClient
+      .from("lab_results")
+      .delete()
+      .eq("report_id", reportId)
+      .eq("user_id", userId);
+
+    if (deleteResultsError) {
+      throw new Error(
+        `Failed to clear previous lab results on retry: ${deleteResultsError.message}`,
+      );
+    }
+
+    // Update existing report record
+    const { error: updateReportError } = await activeClient
+      .from("reports")
+      .update({
+        title: cleanTitle,
+        report_date: validReportDate,
+        parameter_count: parameterCount,
+        status: reportStatus,
+        summary,
+      })
+      .eq("id", reportId)
+      .eq("user_id", userId);
+
+    if (updateReportError) {
+      throw new Error(`Failed to update report record: ${updateReportError.message}`);
+    }
+  } else {
+    // Insert new report row into public.reports
+    const { data: newReport, error: insertReportError } = await activeClient
+      .from("reports")
+      .insert({
+        user_id: userId,
+        title: cleanTitle,
+        report_date: validReportDate,
+        parameter_count: parameterCount,
+        status: reportStatus,
+        summary,
+        file_url: storagePath,
+      })
+      .select("id")
+      .single();
+
+    if (insertReportError || !newReport) {
+      throw new Error(
+        `Failed to save report to database: ${insertReportError?.message || "Unknown error"}`,
+      );
+    }
+
+    reportId = newReport.id;
+  }
+
+  // 6. Insert ALL extracted lab results using the actual schema of public.lab_results
+  if (parameterCount > 0) {
+    const resultRows = extractedData.laboratory_results.map((item) => {
+      const itemStatus = computeBiomarkerStatus(item.value, item.reference_min, item.reference_max);
+      const referenceRange = formatReferenceRange(item.reference_min, item.reference_max);
+      const paramKey =
+        item.standardized_name?.toLowerCase().trim() ||
+        item.test_name
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, "_")
+          .slice(0, 50);
+
+      return {
+        report_id: reportId,
+        user_id: userId,
+        parameter_key: paramKey,
+        parameter_name: item.test_name.trim() || item.standardized_name || "Biomarker",
+        value: typeof item.value === "number" && !isNaN(item.value) ? item.value : null,
+        unit: item.unit ? item.unit.trim() : null,
+        reference_range: referenceRange,
+        status: itemStatus,
+      };
+    });
+
+    const { error: insertResultsError } = await activeClient.from("lab_results").insert(resultRows);
+
+    if (insertResultsError) {
+      throw new Error(
+        `Failed to save extracted lab results to database: ${insertResultsError.message}`,
+      );
+    }
+  }
+
+  return {
+    reportId,
+    reportDate: validReportDate,
+    parameterCount,
+    status: reportStatus,
+    isUpdate,
+  };
 }
