@@ -318,12 +318,12 @@ export function UploadPage() {
         description: `Saved ${record.parameterCount} biomarkers for report date ${record.reportDate || "detected"}.`,
       });
     } catch (saveErr: unknown) {
-      const msg =
-        saveErr instanceof Error ? saveErr.message : "Failed to save results to database.";
+      console.error("[saveToDatabase] Database persistence error:", saveErr);
+      const userMsg = "Unable to save report to database. Please check your connection and retry.";
       setSaving(false);
-      setSaveError(msg);
+      setSaveError(userMsg);
       toast.error("Database save failed", {
-        description: msg,
+        description: userMsg,
       });
     }
   }

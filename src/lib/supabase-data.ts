@@ -75,30 +75,74 @@ function normalizeStatus(val: string | null | undefined): Status {
   return "stable";
 }
 
+interface DbLabResultJoined {
+  id: string;
+  test_name: string;
+  standardized_name: string;
+  value: number | null;
+  unit: string | null;
+  reference_min: number | null;
+  reference_max: number | null;
+}
+
+interface DbReportJoined {
+  id: string;
+  user_id: string;
+  report_date: string | null;
+  file_name: string | null;
+  created_at: string;
+  lab_results?: DbLabResultJoined[];
+}
+
 export async function getRealReports(): Promise<RealReport[]> {
   if (!supabase) return [];
   const { data, error } = await supabase
     .from("reports")
     .select(
-      "id, user_id, title, report_date, lab_name, sample_number, parameter_count, status, summary, file_url, created_at",
+      "id, user_id, report_date, file_name, created_at, lab_results(id, test_name, standardized_name, value, unit, reference_min, reference_max)",
     )
     .order("report_date", { ascending: false });
 
   if (error || !data) return [];
 
-  return data.map((r) => ({
-    id: r.id,
-    user_id: r.user_id,
-    title: r.title,
-    report_date: r.report_date,
-    lab_name: r.lab_name,
-    sample_number: r.sample_number,
-    parameter_count: r.parameter_count ?? 0,
-    status: normalizeStatus(r.status),
-    summary: r.summary,
-    file_url: r.file_url,
-    created_at: r.created_at,
-  }));
+  const reportsList = data as unknown as DbReportJoined[];
+
+  return reportsList.map((r: DbReportJoined) => {
+    const results: DbLabResultJoined[] = r.lab_results ?? [];
+    let reportStatus: Status = "stable";
+    for (const lr of results) {
+      const s = computeBiomarkerStatus(lr.value, lr.reference_min, lr.reference_max);
+      if (s === "significant") {
+        reportStatus = "significant";
+        break;
+      } else if (s === "review") {
+        reportStatus = "review";
+      }
+    }
+
+    const cleanTitle = r.file_name
+      ? r.file_name
+          .replace(/\.pdf$/i, "")
+          .replace(/[_-]+/g, " ")
+          .trim()
+      : r.report_date
+        ? `Laboratory Report - ${r.report_date}`
+        : "Clinical Laboratory Report";
+
+    return {
+      id: r.id,
+      user_id: r.user_id,
+      title: cleanTitle,
+      report_date: r.report_date,
+      lab_name: null,
+      sample_number: null,
+      parameter_count: results.length,
+      status: reportStatus,
+      summary: `Report containing ${results.length} extracted biomarkers`,
+      file_url: r.file_name,
+      created_at: r.created_at,
+    };
+  });
 }
 
 export async function getRealReportDetails(reportId: string): Promise<{
@@ -109,15 +153,21 @@ export async function getRealReportDetails(reportId: string): Promise<{
   if (!supabase) return { report: null, results: [], historyByParam: {} };
 
   const [reportRes, resultsRes, allUserResultsRes] = await Promise.all([
-    supabase.from("reports").select("*").eq("id", reportId).maybeSingle(),
+    supabase
+      .from("reports")
+      .select("id, user_id, report_date, file_name, created_at")
+      .eq("id", reportId)
+      .maybeSingle(),
     supabase
       .from("lab_results")
-      .select("*")
+      .select(
+        "id, report_id, test_name, standardized_name, value, unit, reference_min, reference_max, created_at",
+      )
       .eq("report_id", reportId)
       .order("created_at", { ascending: true }),
     supabase
       .from("lab_results")
-      .select("parameter_key, value, created_at")
+      .select("standardized_name, value, created_at")
       .order("created_at", { ascending: true }),
   ]);
 
@@ -126,40 +176,63 @@ export async function getRealReportDetails(reportId: string): Promise<{
   }
 
   const r = reportRes.data;
+  const rawResults = resultsRes.data ?? [];
+
+  let reportStatus: Status = "stable";
+  const results: RealLabResult[] = (rawResults as DbLabResultJoined[]).map(
+    (row: DbLabResultJoined) => {
+      const itemStatus = computeBiomarkerStatus(row.value, row.reference_min, row.reference_max);
+      if (itemStatus === "significant") reportStatus = "significant";
+      else if (itemStatus === "review" && reportStatus !== "significant") reportStatus = "review";
+
+      const refRange = formatReferenceRange(row.reference_min, row.reference_max);
+      const paramKey = row.standardized_name || row.test_name;
+      return {
+        id: row.id,
+        report_id: reportId,
+        user_id: r.user_id,
+        parameter_key: paramKey,
+        parameter_name: row.test_name,
+        value: Number(row.value),
+        unit: row.unit,
+        reference_range: refRange,
+        status: itemStatus,
+        created_at: (row as unknown as { created_at?: string }).created_at || "",
+      };
+    },
+  );
+
+  const cleanTitle = r.file_name
+    ? r.file_name
+        .replace(/\.pdf$/i, "")
+        .replace(/[_-]+/g, " ")
+        .trim()
+    : r.report_date
+      ? `Laboratory Report - ${r.report_date}`
+      : "Clinical Laboratory Report";
+
   const report: RealReport = {
     id: r.id,
     user_id: r.user_id,
-    title: r.title,
+    title: cleanTitle,
     report_date: r.report_date,
-    lab_name: r.lab_name,
-    sample_number: r.sample_number,
-    parameter_count: r.parameter_count ?? 0,
-    status: normalizeStatus(r.status),
-    summary: r.summary,
-    file_url: r.file_url,
+    lab_name: null,
+    sample_number: null,
+    parameter_count: results.length,
+    status: reportStatus,
+    summary: `Extracted ${results.length} biomarkers from report`,
+    file_url: r.file_name,
     created_at: r.created_at,
   };
-
-  const results: RealLabResult[] = (resultsRes.data ?? []).map((row) => ({
-    id: row.id,
-    report_id: row.report_id,
-    user_id: row.user_id,
-    parameter_key: row.parameter_key,
-    parameter_name: row.parameter_name,
-    value: Number(row.value),
-    unit: row.unit,
-    reference_range: row.reference_range,
-    status: normalizeStatus(row.status),
-    created_at: row.created_at,
-  }));
 
   const historyByParam: Record<string, number[]> = {};
   if (allUserResultsRes.data) {
     for (const item of allUserResultsRes.data) {
-      if (!historyByParam[item.parameter_key]) {
-        historyByParam[item.parameter_key] = [];
+      const key = item.standardized_name || "unknown";
+      if (!historyByParam[key]) {
+        historyByParam[key] = [];
       }
-      historyByParam[item.parameter_key].push(Number(item.value));
+      historyByParam[key].push(Number(item.value));
     }
   }
 
@@ -191,7 +264,7 @@ export async function getRealAnalysisData(): Promise<{
       )
       .order("created_at", { ascending: false }),
     supabase.from("reports").select("id, report_date").order("report_date", { ascending: true }),
-    supabase.from("lab_results").select("parameter_key"),
+    supabase.from("lab_results").select("standardized_name"),
   ]);
 
   const findings: RealAnalysisFinding[] = (analysisRes.data ?? []).map((a) => ({
@@ -235,7 +308,9 @@ export async function getRealAnalysisData(): Promise<{
     );
 
   const reportsCount = reportsRes.data?.length ?? 0;
-  const parametersCount = new Set((labRes.data ?? []).map((l) => l.parameter_key)).size;
+  const parametersCount = new Set(
+    (labRes.data ?? []).map((l: { standardized_name: string | null }) => l.standardized_name),
+  ).size;
 
   return { findings, anomalies, reportDates, reportsCount, parametersCount };
 }
@@ -250,12 +325,12 @@ export async function getRealTrendsData(): Promise<{
   const [reportsRes, labResultsRes] = await Promise.all([
     supabase
       .from("reports")
-      .select("id, title, report_date")
+      .select("id, report_date, file_name")
       .order("report_date", { ascending: true }),
     supabase
       .from("lab_results")
       .select(
-        "id, report_id, parameter_key, parameter_name, value, unit, reference_range, status, created_at",
+        "id, report_id, test_name, standardized_name, value, unit, reference_min, reference_max, created_at",
       )
       .order("created_at", { ascending: true }),
   ]);
@@ -284,7 +359,8 @@ export async function getRealTrendsData(): Promise<{
     };
     for (const lr of labResults) {
       if (lr.report_id === r.id) {
-        row[lr.parameter_key] = Number(lr.value);
+        const key = lr.standardized_name || lr.test_name;
+        row[key] = Number(lr.value);
       }
     }
     return row;
@@ -304,25 +380,28 @@ export async function getRealTrendsData(): Promise<{
   >();
 
   for (const lr of labResults) {
-    let p = paramMap.get(lr.parameter_key);
+    const key = lr.standardized_name || lr.test_name;
+    let p = paramMap.get(key);
     if (!p) {
+      const refRange = formatReferenceRange(lr.reference_min, lr.reference_max);
       p = {
-        key: lr.parameter_key,
-        name: lr.parameter_name,
+        key,
+        name: lr.test_name,
         unit: lr.unit ?? "",
-        referenceRange: lr.reference_range ?? "Normal",
+        referenceRange: refRange,
         values: [],
         dates: [],
         statuses: [],
       };
-      paramMap.set(lr.parameter_key, p);
+      paramMap.set(key, p);
     }
     const val = Number(lr.value);
     if (!isNaN(val)) {
       p.values.push(val);
       const rDate = reportLabelMap.get(lr.report_id) ?? "";
       p.dates.push(rDate);
-      p.statuses.push(normalizeStatus(lr.status));
+      const st = computeBiomarkerStatus(val, lr.reference_min, lr.reference_max);
+      p.statuses.push(st);
     }
   }
 
@@ -469,28 +548,17 @@ export async function saveExtractedReport({
     }
   }
 
-  // 4. Derive report title and summary
-  const cleanTitle = fileName
-    ? fileName
-        .replace(/\.pdf$/i, "")
-        .replace(/[_-]+/g, " ")
-        .trim()
-    : validReportDate
-      ? `Laboratory Report - ${validReportDate}`
-      : "Clinical Laboratory Report";
-
+  // 4. File name identifier for public.reports.file_name
+  const targetFileName = fileName || storagePath.split("/").pop() || "lab_report.pdf";
   const parameterCount = extractedData.laboratory_results.length;
-  const summary = `Extracted ${parameterCount} biomarkers${
-    validReportDate ? ` from report dated ${validReportDate}` : ""
-  }.`;
 
   // 5. Prevent duplicate inserts on retry (Requirement 6)
-  // Check if a report with this file_url and user_id already exists in public.reports
+  // Check if a report with this file_name and user_id already exists in public.reports
   const { data: existingReport, error: checkError } = await activeClient
     .from("reports")
     .select("id")
     .eq("user_id", userId)
-    .eq("file_url", storagePath)
+    .eq("file_name", targetFileName)
     .maybeSingle();
 
   if (checkError) {
@@ -504,47 +572,37 @@ export async function saveExtractedReport({
     isUpdate = true;
     reportId = existingReport.id;
 
-    // Remove any previously inserted lab_results for this report to prevent duplicate rows on retry
-    const { error: deleteResultsError } = await activeClient
+    // Check if lab results have already been inserted for this existing report
+    const { data: existingLabResults, error: checkLabError } = await activeClient
       .from("lab_results")
-      .delete()
-      .eq("report_id", reportId)
-      .eq("user_id", userId);
+      .select("id")
+      .eq("report_id", reportId);
 
-    if (deleteResultsError) {
-      throw new Error(
-        `Failed to clear previous lab results on retry: ${deleteResultsError.message}`,
+    if (checkLabError) {
+      console.warn(
+        "[saveExtractedReport] Existing lab results check notice:",
+        checkLabError.message,
       );
     }
 
-    // Update existing report record
-    const { error: updateReportError } = await activeClient
-      .from("reports")
-      .update({
-        title: cleanTitle,
-        report_date: validReportDate,
-        parameter_count: parameterCount,
+    // If lab results are already stored, prevent duplicates and return existing report metadata
+    if (existingLabResults && existingLabResults.length > 0) {
+      return {
+        reportId,
+        reportDate: validReportDate,
+        parameterCount: existingLabResults.length,
         status: reportStatus,
-        summary,
-      })
-      .eq("id", reportId)
-      .eq("user_id", userId);
-
-    if (updateReportError) {
-      throw new Error(`Failed to update report record: ${updateReportError.message}`);
+        isUpdate: true,
+      };
     }
   } else {
-    // Insert new report row into public.reports
+    // Insert new report row into public.reports using ONLY actual columns: user_id, file_name, report_date
     const { data: newReport, error: insertReportError } = await activeClient
       .from("reports")
       .insert({
         user_id: userId,
-        title: cleanTitle,
+        file_name: targetFileName,
         report_date: validReportDate,
-        parameter_count: parameterCount,
-        status: reportStatus,
-        summary,
-        file_url: storagePath,
       })
       .select("id")
       .single();
@@ -559,26 +617,32 @@ export async function saveExtractedReport({
   }
 
   // 6. Insert ALL extracted lab results using the actual schema of public.lab_results
+  // Actual schema: report_id, test_name, standardized_name, value, unit, reference_min, reference_max
   if (parameterCount > 0) {
     const resultRows = extractedData.laboratory_results.map((item) => {
-      const itemStatus = computeBiomarkerStatus(item.value, item.reference_min, item.reference_max);
-      const referenceRange = formatReferenceRange(item.reference_min, item.reference_max);
-      const paramKey =
-        item.standardized_name?.toLowerCase().trim() ||
+      const cleanTestName = item.test_name?.trim() || item.standardized_name || "Laboratory Test";
+      const cleanStdName =
+        item.standardized_name?.trim() ||
         item.test_name
-          .toLowerCase()
+          ?.toLowerCase()
           .replace(/[^a-z0-9]+/g, "_")
-          .slice(0, 50);
+          .slice(0, 50) ||
+        "biomarker";
 
       return {
         report_id: reportId,
-        user_id: userId,
-        parameter_key: paramKey,
-        parameter_name: item.test_name.trim() || item.standardized_name || "Biomarker",
+        test_name: cleanTestName,
+        standardized_name: cleanStdName,
         value: typeof item.value === "number" && !isNaN(item.value) ? item.value : null,
         unit: item.unit ? item.unit.trim() : null,
-        reference_range: referenceRange,
-        status: itemStatus,
+        reference_min:
+          typeof item.reference_min === "number" && !isNaN(item.reference_min)
+            ? item.reference_min
+            : null,
+        reference_max:
+          typeof item.reference_max === "number" && !isNaN(item.reference_max)
+            ? item.reference_max
+            : null,
       };
     });
 

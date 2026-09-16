@@ -86,12 +86,12 @@ export async function fetchDashboardData(): Promise<DashboardData> {
   const [reportsRes, labResultsRes, analysisRes, anomaliesRes] = await Promise.all([
     supabase
       .from("reports")
-      .select("id, title, report_date, status, summary")
+      .select("id, report_date, file_name")
       .order("report_date", { ascending: true }),
     supabase
       .from("lab_results")
       .select(
-        "id, report_id, parameter_key, parameter_name, value, unit, reference_range, status, created_at",
+        "id, report_id, test_name, standardized_name, value, unit, reference_min, reference_max, created_at",
       )
       .order("created_at", { ascending: true }),
     supabase
@@ -112,10 +112,10 @@ export async function fetchDashboardData(): Promise<DashboardData> {
   const anomalyRows = anomaliesRes.data ?? [];
 
   const reportsCount = reports.length;
-  const parametersTracked = new Set(labResults.map((r) => r.parameter_key)).size;
+  const parametersTracked = new Set(labResults.map((r) => r.standardized_name || r.test_name)).size;
   const changesDetected = anomalyRows.length;
   const anomalousKeys = new Set(anomalyRows.map((a) => a.parameter_key));
-  const allParamKeys = new Set(labResults.map((r) => r.parameter_key));
+  const allParamKeys = new Set(labResults.map((r) => r.standardized_name || r.test_name));
   const stableParameters = Array.from(allParamKeys).filter((k) => !anomalousKeys.has(k)).length;
 
   const findings: AnalysisFinding[] = analysisRows.map((a) => ({
@@ -149,10 +149,10 @@ export async function fetchDashboardData(): Promise<DashboardData> {
   const parameters: ParameterMeta[] = [];
   const paramKeySet = new Set<string>();
   for (const lr of labResults) {
-    const k = lr.parameter_key;
+    const k = lr.standardized_name || lr.test_name;
     if (!paramKeySet.has(k)) {
       paramKeySet.add(k);
-      parameters.push({ key: k, name: lr.parameter_name, unit: lr.unit ?? "" });
+      parameters.push({ key: k, name: lr.test_name, unit: lr.unit ?? "" });
     }
   }
 
@@ -164,7 +164,8 @@ export async function fetchDashboardData(): Promise<DashboardData> {
     };
     for (const lr of labResults) {
       if (lr.report_id === reportId) {
-        row[lr.parameter_key] = Number(lr.value);
+        const k = lr.standardized_name || lr.test_name;
+        row[k] = Number(lr.value);
       }
     }
     return row;
