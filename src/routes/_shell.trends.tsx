@@ -251,11 +251,11 @@ function TrendsPage() {
         <>
           <GlassCard>
             <div className="flex flex-wrap gap-2">
-              {availableParams.map((p) => {
+              {availableParams.map((p, idx) => {
                 const on = selected.includes(p.key);
                 return (
                   <button
-                    key={p.key}
+                    key={`${p.key}-${idx}`}
                     onClick={() => toggle(p.key)}
                     aria-pressed={on}
                     className={cn(
@@ -288,7 +288,7 @@ function TrendsPage() {
 
           {selectedDetails.length > 0 && (
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-              {selectedDetails.map((p) => {
+              {selectedDetails.map((p, idx) => {
                 const Icon =
                   p.direction === "up"
                     ? ArrowUpRight
@@ -296,7 +296,7 @@ function TrendsPage() {
                       ? ArrowDownRight
                       : Minus;
                 return (
-                  <GlassCard key={p.key} hover>
+                  <GlassCard key={`${p.key}-${idx}`} hover>
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
                         <h2 className="truncate text-base font-bold">{p.name}</h2>

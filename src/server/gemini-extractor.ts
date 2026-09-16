@@ -108,6 +108,22 @@ Extraction Rules:
    - Do NOT invent or hallucinate test results not present in the document.
    - If the document is unreadable or does not contain lab test results, return an empty array for laboratory_results.`;
 
+function isHighDemandError(error: unknown): boolean {
+  if (!error) return false;
+  const str = error instanceof Error ? error.message : String(error);
+  const errObj = error as { status?: string | number; code?: number };
+  if (errObj.status === "UNAVAILABLE" || errObj.status === 503 || errObj.code === 503) {
+    return true;
+  }
+  const lower = str.toLowerCase();
+  return (
+    lower.includes("503") ||
+    lower.includes("unavailable") ||
+    lower.includes("high demand") ||
+    lower.includes("spikes in demand")
+  );
+}
+
 function isTransientGeminiError(error: unknown): boolean {
   if (!error) return false;
   const str = error instanceof Error ? error.message : String(error);
@@ -164,17 +180,17 @@ export async function extractLaboratoryDataFromPdf(
   const base64Pdf = pdfBuffer.toString("base64");
 
   let response;
-  // Prioritize primary flash model, followed by high-throughput lite model and dynamic latest alias
+  // Prioritize stable, high-throughput models with schema support, falling back to other models
   const modelsToTry = [
-    "gemini-3.8-flash",
     "gemini-3.1-flash-lite",
-    "gemini-flash-latest",
     "gemini-3.6-flash",
+    "gemini-3.8-flash",
+    "gemini-flash-latest",
   ];
   let lastError: unknown = null;
 
   modelLoop: for (const modelName of modelsToTry) {
-    const maxRetriesPerModel = 2; // Up to 3 attempts total per model
+    const maxRetriesPerModel = 1; // 2 attempts per model for transient network issues
     for (let attempt = 0; attempt <= maxRetriesPerModel; attempt++) {
       try {
         response = await ai.models.generateContent({
@@ -202,11 +218,21 @@ export async function extractLaboratoryDataFromPdf(
         }
       } catch (apiError: unknown) {
         lastError = apiError;
+        const highDemand = isHighDemandError(apiError);
         const transient = isTransientGeminiError(apiError);
 
+        // When a model experiences a high-demand capacity spike (503), do not hammer it with retries.
+        // Immediately failover to the next candidate model in the pool.
+        if (highDemand) {
+          console.warn(
+            `Gemini model ${modelName} is experiencing high demand (503). Immediately switching to next model candidate...`,
+          );
+          break; // Move immediately to next model candidate
+        }
+
         if (transient && attempt < maxRetriesPerModel) {
-          const baseDelay = (attempt + 1) * 1500;
-          const jitter = Math.floor(Math.random() * 500);
+          const baseDelay = (attempt + 1) * 800;
+          const jitter = Math.floor(Math.random() * 300);
           const backoffDelay = baseDelay + jitter;
           console.warn(
             `Gemini extraction with ${modelName} encountered transient error (attempt ${attempt + 1}/${maxRetriesPerModel + 1}). Retrying in ${backoffDelay}ms...`,
@@ -219,11 +245,6 @@ export async function extractLaboratoryDataFromPdf(
           `Gemini extraction with ${modelName} failed after ${attempt + 1} attempt(s), trying next fallback model if available...`,
           apiError,
         );
-        if (transient) {
-          await new Promise((resolve) =>
-            setTimeout(resolve, 1000 + Math.floor(Math.random() * 500)),
-          );
-        }
         break; // Move to next model candidate
       }
     }

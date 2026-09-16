@@ -359,7 +359,7 @@ export async function getRealTrendsData(): Promise<{
     };
     for (const lr of labResults) {
       if (lr.report_id === r.id) {
-        const key = lr.standardized_name || lr.test_name;
+        const key = (lr.standardized_name || lr.test_name || "biomarker").trim().toLowerCase();
         row[key] = Number(lr.value);
       }
     }
@@ -380,7 +380,7 @@ export async function getRealTrendsData(): Promise<{
   >();
 
   for (const lr of labResults) {
-    const key = lr.standardized_name || lr.test_name;
+    const key = (lr.standardized_name || lr.test_name || "biomarker").trim().toLowerCase();
     let p = paramMap.get(key);
     if (!p) {
       const refRange = formatReferenceRange(lr.reference_min, lr.reference_max);

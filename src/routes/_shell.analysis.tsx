@@ -228,9 +228,9 @@ function AnalysisPage() {
 
             {reportDates.length > 0 && (
               <div className="mt-5 flex flex-wrap gap-2">
-                {reportDates.map((d) => (
+                {reportDates.map((d, i) => (
                   <span
-                    key={d}
+                    key={`${d}-${i}`}
                     className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-xs font-semibold text-muted-foreground"
                   >
                     {d}

@@ -34,6 +34,7 @@ const TONE: Record<Status, string> = {
 };
 
 interface ParameterRow {
+  id: string;
   key: string;
   name: string;
   category: string;
@@ -83,7 +84,7 @@ function ReportDetails() {
           setReport(realReport);
           setIsDemo(false);
 
-          const rows: ParameterRow[] = realResults.map((lr: RealLabResult) => {
+          const rows: ParameterRow[] = realResults.map((lr: RealLabResult, idx: number) => {
             const hist = historyByParam[lr.parameter_key] ?? [lr.value];
             let changeLabel = "Baseline";
             if (hist.length > 1) {
@@ -95,6 +96,7 @@ function ReportDetails() {
               }
             }
             return {
+              id: lr.id || `${lr.parameter_key}-${idx}`,
               key: lr.parameter_key,
               name: lr.parameter_name,
               category: "Laboratory Panel",
@@ -121,17 +123,20 @@ function ReportDetails() {
           setDemoReport(dReport);
           setIsDemo(true);
 
-          const dRows: ParameterRow[] = demoParams.slice(0, dReport.parameterCount).map((p) => ({
-            key: p.key,
-            name: p.name,
-            category: p.category,
-            value: p.values[dReport.index],
-            unit: p.unit,
-            referenceRange: p.referenceRange,
-            status: p.status,
-            history: p.values,
-            changeLabel: `${p.changePct > 0 ? "+" : ""}${p.changePct}%`,
-          }));
+          const dRows: ParameterRow[] = demoParams
+            .slice(0, dReport.parameterCount)
+            .map((p, idx) => ({
+              id: `demo-${p.key}-${idx}`,
+              key: p.key,
+              name: p.name,
+              category: p.category,
+              value: p.values[dReport.index],
+              unit: p.unit,
+              referenceRange: p.referenceRange,
+              status: p.status,
+              history: p.values,
+              changeLabel: `${p.changePct > 0 ? "+" : ""}${p.changePct}%`,
+            }));
 
           setParamRows(dRows);
         } else {
@@ -281,9 +286,9 @@ function ReportDetails() {
               </tr>
             </thead>
             <tbody>
-              {filteredRows.map((p) => (
+              {filteredRows.map((p, idx) => (
                 <tr
-                  key={p.key}
+                  key={p.id || `${p.key}-${idx}`}
                   className="border-t border-white/8 transition-colors hover:bg-white/[0.03]"
                 >
                   <td className="px-5 py-4">

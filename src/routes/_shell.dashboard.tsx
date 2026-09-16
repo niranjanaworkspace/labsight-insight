@@ -260,11 +260,11 @@ function Dashboard() {
               ) : (
                 <>
                   <div className="mt-3 flex flex-wrap gap-2">
-                    {data.parameters.map((p) => {
+                    {data.parameters.map((p, idx) => {
                       const on = active.includes(p.key);
                       return (
                         <button
-                          key={p.key}
+                          key={`${p.key}-${idx}`}
                           onClick={() => toggle(p.key)}
                           aria-pressed={on}
                           className={cn(

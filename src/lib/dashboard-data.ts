@@ -149,7 +149,7 @@ export async function fetchDashboardData(): Promise<DashboardData> {
   const parameters: ParameterMeta[] = [];
   const paramKeySet = new Set<string>();
   for (const lr of labResults) {
-    const k = lr.standardized_name || lr.test_name;
+    const k = (lr.standardized_name || lr.test_name || "biomarker").trim().toLowerCase();
     if (!paramKeySet.has(k)) {
       paramKeySet.add(k);
       parameters.push({ key: k, name: lr.test_name, unit: lr.unit ?? "" });
@@ -164,7 +164,7 @@ export async function fetchDashboardData(): Promise<DashboardData> {
     };
     for (const lr of labResults) {
       if (lr.report_id === reportId) {
-        const k = lr.standardized_name || lr.test_name;
+        const k = (lr.standardized_name || lr.test_name || "biomarker").trim().toLowerCase();
         row[k] = Number(lr.value);
       }
     }
