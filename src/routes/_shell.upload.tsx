@@ -145,6 +145,7 @@ export function UploadPage() {
     return () => {
       isMounted = false;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function handleFileSelection(selectedFile: File | null) {
