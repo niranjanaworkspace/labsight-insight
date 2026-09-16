@@ -4,6 +4,7 @@ import { consumeLastCapturedError } from "./lib/error-capture";
 import { renderErrorPage } from "./lib/error-page";
 
 import { handleExtractReportRequest } from "./server/api-handler";
+import { handleRunLongitudinalAnalysis } from "./server/longitudinal-api-handler";
 
 type ServerEntry = {
   fetch: (request: Request, env: unknown, ctx: unknown) => Promise<Response> | Response;
@@ -57,6 +58,9 @@ export default {
       }
       if (url.pathname === "/api/extract-report") {
         return await handleExtractReportRequest(request);
+      }
+      if (url.pathname === "/api/run-longitudinal-analysis") {
+        return await handleRunLongitudinalAnalysis(request);
       }
       const handler = await getServerEntry();
       const response = await handler.fetch(request, env, ctx);

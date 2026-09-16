@@ -83,7 +83,7 @@ export async function fetchDashboardData(): Promise<DashboardData> {
     return EMPTY_DASHBOARD;
   }
 
-  const [reportsRes, labResultsRes, analysisRes, anomaliesRes] = await Promise.all([
+  const [reportsRes, labResultsRes, analysisRes] = await Promise.all([
     supabase
       .from("reports")
       .select("id, report_date, file_name")
@@ -96,45 +96,87 @@ export async function fetchDashboardData(): Promise<DashboardData> {
       .order("created_at", { ascending: true }),
     supabase
       .from("analysis")
-      .select(
-        "id, headline, status, change_label, confidence, reasons, recommendation, parameter_name, report_id",
-      )
-      .order("created_at", { ascending: false }),
-    supabase
-      .from("anomalies")
-      .select("id, parameter_key, parameter_name, anomaly_type, severity, description, report_id")
-      .order("created_at", { ascending: false }),
+      .select("id, user_id, analysis_date, overall_status, summary")
+      .order("analysis_date", { ascending: false })
+      .limit(1),
   ]);
 
   const reports = reportsRes.data ?? [];
   const labResults = labResultsRes.data ?? [];
-  const analysisRows = analysisRes.data ?? [];
-  const anomalyRows = anomaliesRes.data ?? [];
+  const latestAnalysis = analysisRes.data?.[0];
+
+  let anomalyRows: Array<{
+    id: string;
+    analysis_id: string;
+    test_name: string;
+    anomaly_type: string | null;
+    severity: string | null;
+    previous_value: number | null;
+    current_value: number | null;
+    percentage_change: number | null;
+    ai_explanation: string | null;
+    created_at: string;
+  }> = [];
+
+  if (latestAnalysis?.id) {
+    const anomaliesRes = await supabase
+      .from("anomalies")
+      .select(
+        "id, analysis_id, test_name, anomaly_type, severity, previous_value, current_value, percentage_change, ai_explanation, created_at",
+      )
+      .eq("analysis_id", latestAnalysis.id)
+      .order("created_at", { ascending: false });
+    anomalyRows = (anomaliesRes.data ?? []) as typeof anomalyRows;
+  }
 
   const reportsCount = reports.length;
-  const parametersTracked = new Set(labResults.map((r) => r.standardized_name || r.test_name)).size;
+  const parametersTracked = new Set(
+    labResults.map((r) => (r.standardized_name || r.test_name || "").trim().toLowerCase()),
+  ).size;
   const changesDetected = anomalyRows.length;
-  const anomalousKeys = new Set(anomalyRows.map((a) => a.parameter_key));
-  const allParamKeys = new Set(labResults.map((r) => r.standardized_name || r.test_name));
-  const stableParameters = Array.from(allParamKeys).filter((k) => !anomalousKeys.has(k)).length;
+  const anomalousNames = new Set(anomalyRows.map((a) => a.test_name.trim().toLowerCase()));
+  const allParamKeys = new Set(
+    labResults.map((r) => (r.standardized_name || r.test_name || "").trim().toLowerCase()),
+  );
+  const stableParameters = Array.from(allParamKeys).filter((k) => !anomalousNames.has(k)).length;
 
-  const findings: AnalysisFinding[] = analysisRows.map((a) => ({
-    id: a.id,
-    headline: a.headline,
-    status: normalizeStatus(a.status),
-    change_label: a.change_label ?? "",
-    reasons: Array.isArray(a.reasons) ? a.reasons : [],
-    recommendation: a.recommendation ?? "",
-    parameter_name: a.parameter_name ?? "",
-  }));
+  const findings: AnalysisFinding[] = anomalyRows.map((a) => {
+    const pctStr =
+      a.percentage_change !== null
+        ? ` (${a.percentage_change > 0 ? "+" : ""}${a.percentage_change}%)`
+        : "";
+    const headline = `${a.test_name}: ${(a.anomaly_type || "trend").replace(/_/g, " ")}${pctStr}`;
+
+    const reasons: string[] = [];
+    if (a.previous_value !== null && a.current_value !== null) {
+      reasons.push(`Previous: ${a.previous_value} → Current: ${a.current_value}`);
+    }
+    if (a.ai_explanation) {
+      reasons.push(a.ai_explanation);
+    }
+
+    return {
+      id: a.id,
+      headline,
+      status: normalizeStatus(a.severity),
+      change_label:
+        a.percentage_change !== null
+          ? `${a.percentage_change > 0 ? "+" : ""}${a.percentage_change}%`
+          : "Shift",
+      reasons,
+      recommendation:
+        a.ai_explanation || "Discuss findings with a qualified healthcare professional.",
+      parameter_name: a.test_name,
+    };
+  });
 
   const anomalies: AnomalyItem[] = anomalyRows.map((a) => ({
     id: a.id,
-    parameter_key: a.parameter_key,
-    parameter_name: a.parameter_name,
+    parameter_key: a.test_name.trim().toLowerCase(),
+    parameter_name: a.test_name,
     anomaly_type: a.anomaly_type,
     severity: normalizeStatus(a.severity),
-    description: a.description,
+    description: a.ai_explanation,
   }));
 
   const reportDateMap = new Map(reports.map((r) => [r.id, r.report_date]));

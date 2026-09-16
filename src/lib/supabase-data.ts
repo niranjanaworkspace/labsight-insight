@@ -32,6 +32,7 @@ export interface RealLabResult {
 
 export interface RealAnalysisFinding {
   id: string;
+  analysis_id?: string;
   report_id: string | null;
   headline: string;
   status: Status;
@@ -40,18 +41,33 @@ export interface RealAnalysisFinding {
   reasons: string[];
   recommendation: string;
   parameter_name: string;
+  previous_value?: number | null;
+  current_value?: number | null;
+  percentage_change?: number | null;
+  anomaly_type?: string | null;
+  ai_explanation?: string | null;
   created_at: string;
 }
 
 export interface RealAnomaly {
   id: string;
-  report_id: string | null;
-  parameter_key: string;
-  parameter_name: string;
+  analysis_id: string;
+  test_name: string;
   anomaly_type: string | null;
   severity: Status;
-  description: string | null;
+  previous_value: number | null;
+  current_value: number | null;
+  percentage_change: number | null;
+  ai_explanation: string | null;
   created_at: string;
+}
+
+export interface RealAnalysisRecord {
+  id: string;
+  user_id: string;
+  analysis_date: string;
+  overall_status: Status;
+  summary: string | null;
 }
 
 export interface ParameterTrendMeta {
@@ -239,62 +255,135 @@ export async function getRealReportDetails(reportId: string): Promise<{
   return { report, results, historyByParam };
 }
 
+function formatAnomalyHeadline(anomalyType: string | null, pctChange: number | null): string {
+  const pctStr = pctChange !== null ? ` (${pctChange > 0 ? "+" : ""}${pctChange}%)` : "";
+  switch (anomalyType) {
+    case "sudden_change":
+      return `Sudden Change Detected${pctStr}`;
+    case "persistent_abnormal":
+      return `Persistent Out-of-Range Value`;
+    case "unusual_fluctuation":
+      return `Unusual Fluctuation Pattern`;
+    case "elevated_trend":
+      return `Progressive Upward Trend${pctStr}`;
+    case "declining_trend":
+      return `Progressive Downward Trend${pctStr}`;
+    default:
+      return `Longitudinal Pattern Observed${pctStr}`;
+  }
+}
+
 export async function getRealAnalysisData(): Promise<{
   findings: RealAnalysisFinding[];
   anomalies: RealAnomaly[];
+  latestAnalysis: RealAnalysisRecord | null;
   reportDates: string[];
   reportsCount: number;
   parametersCount: number;
 }> {
   if (!supabase) {
-    return { findings: [], anomalies: [], reportDates: [], reportsCount: 0, parametersCount: 0 };
+    return {
+      findings: [],
+      anomalies: [],
+      latestAnalysis: null,
+      reportDates: [],
+      reportsCount: 0,
+      parametersCount: 0,
+    };
   }
 
-  const [analysisRes, anomaliesRes, reportsRes, labRes] = await Promise.all([
+  const [analysisRes, reportsRes, labRes] = await Promise.all([
     supabase
       .from("analysis")
-      .select(
-        "id, report_id, headline, status, change_label, confidence, reasons, recommendation, parameter_name, created_at",
-      )
-      .order("created_at", { ascending: false }),
-    supabase
-      .from("anomalies")
-      .select(
-        "id, report_id, parameter_key, parameter_name, anomaly_type, severity, description, created_at",
-      )
-      .order("created_at", { ascending: false }),
+      .select("id, user_id, analysis_date, overall_status, summary")
+      .order("analysis_date", { ascending: false })
+      .limit(1),
     supabase.from("reports").select("id, report_date").order("report_date", { ascending: true }),
     supabase.from("lab_results").select("standardized_name"),
   ]);
 
-  const findings: RealAnalysisFinding[] = (analysisRes.data ?? []).map((a) => ({
-    id: a.id,
-    report_id: a.report_id,
-    headline: a.headline,
-    status: normalizeStatus(a.status),
-    change_label: a.change_label ?? "",
-    confidence: a.confidence ?? 80,
-    reasons: Array.isArray(a.reasons)
-      ? a.reasons
-      : typeof a.reasons === "string"
-        ? [a.reasons]
-        : [],
-    recommendation:
-      a.recommendation ?? "Discuss findings with a qualified healthcare professional.",
-    parameter_name: a.parameter_name ?? a.headline,
-    created_at: a.created_at,
-  }));
+  const rawAnalysis = analysisRes.data?.[0];
+  const latestAnalysis: RealAnalysisRecord | null = rawAnalysis
+    ? {
+        id: rawAnalysis.id,
+        user_id: rawAnalysis.user_id,
+        analysis_date: rawAnalysis.analysis_date,
+        overall_status: normalizeStatus(rawAnalysis.overall_status),
+        summary: rawAnalysis.summary,
+      }
+    : null;
 
-  const anomalies: RealAnomaly[] = (anomaliesRes.data ?? []).map((an) => ({
-    id: an.id,
-    report_id: an.report_id,
-    parameter_key: an.parameter_key,
-    parameter_name: an.parameter_name,
-    anomaly_type: an.anomaly_type,
-    severity: normalizeStatus(an.severity),
-    description: an.description,
-    created_at: an.created_at,
-  }));
+  let anomalies: RealAnomaly[] = [];
+  if (latestAnalysis?.id) {
+    const anomaliesRes = await supabase
+      .from("anomalies")
+      .select(
+        "id, analysis_id, test_name, anomaly_type, severity, previous_value, current_value, percentage_change, ai_explanation, created_at",
+      )
+      .eq("analysis_id", latestAnalysis.id)
+      .order("created_at", { ascending: false });
+
+    anomalies = (anomaliesRes.data ?? []).map((an) => ({
+      id: an.id,
+      analysis_id: an.analysis_id,
+      test_name: an.test_name,
+      anomaly_type: an.anomaly_type,
+      severity: normalizeStatus(an.severity),
+      previous_value: an.previous_value !== null ? Number(an.previous_value) : null,
+      current_value: an.current_value !== null ? Number(an.current_value) : null,
+      percentage_change: an.percentage_change !== null ? Number(an.percentage_change) : null,
+      ai_explanation: an.ai_explanation,
+      created_at: an.created_at,
+    }));
+  }
+
+  const findings: RealAnalysisFinding[] = anomalies.map((a) => {
+    const reasons: string[] = [];
+    if (a.previous_value !== null && a.current_value !== null) {
+      const delta = a.current_value - a.previous_value;
+      const pctStr =
+        a.percentage_change !== null
+          ? ` (${a.percentage_change > 0 ? "+" : ""}${a.percentage_change}%)`
+          : "";
+      reasons.push(
+        `Previous: ${a.previous_value} → Current: ${a.current_value} (Δ ${delta > 0 ? "+" : ""}${delta.toFixed(2)}${pctStr})`,
+      );
+    }
+    if (a.anomaly_type) {
+      reasons.push(`Pattern classification: ${a.anomaly_type.replace(/_/g, " ")}`);
+    }
+    if (a.ai_explanation) {
+      reasons.push(a.ai_explanation);
+    }
+
+    const changeLabel =
+      a.percentage_change !== null
+        ? `${a.percentage_change > 0 ? "+" : ""}${a.percentage_change}%`
+        : a.anomaly_type === "persistent_abnormal"
+          ? "Out of Range"
+          : "Shift Detected";
+
+    return {
+      id: a.id,
+      analysis_id: a.analysis_id,
+      report_id: null,
+      headline: `${a.test_name}: ${formatAnomalyHeadline(a.anomaly_type, a.percentage_change)}`,
+      status: a.severity,
+      change_label: changeLabel,
+      confidence: a.severity === "significant" ? 92 : a.severity === "review" ? 84 : 75,
+      reasons,
+      recommendation:
+        a.ai_explanation ||
+        "Review these longitudinal shifts with your physician for comprehensive clinical correlation.",
+      parameter_name: a.test_name,
+      previous_value: a.previous_value,
+      current_value: a.current_value,
+      percentage_change: a.percentage_change,
+      anomaly_type: a.anomaly_type,
+      ai_explanation: a.ai_explanation,
+      created_at: a.created_at,
+    };
+  });
 
   const reportDates = (reportsRes.data ?? [])
     .map((r) => r.report_date)
@@ -312,7 +401,49 @@ export async function getRealAnalysisData(): Promise<{
     (labRes.data ?? []).map((l: { standardized_name: string | null }) => l.standardized_name),
   ).size;
 
-  return { findings, anomalies, reportDates, reportsCount, parametersCount };
+  return { findings, anomalies, latestAnalysis, reportDates, reportsCount, parametersCount };
+}
+
+export async function runRealLongitudinalAnalysis(): Promise<{
+  success: boolean;
+  analysisId?: string;
+  overallStatus?: Status;
+  summary?: string;
+  reportsAnalyzed?: number;
+  parametersCompared?: number;
+  anomaliesCount?: number;
+  error?: string;
+}> {
+  if (!supabase) {
+    throw new Error("Supabase client is not available.");
+  }
+
+  const {
+    data: { session },
+    error: sessionError,
+  } = await supabase.auth.getSession();
+
+  if (sessionError || !session?.access_token) {
+    throw new Error("User session token is required to run longitudinal analysis.");
+  }
+
+  const response = await fetch("/api/run-longitudinal-analysis", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${session.access_token}`,
+    },
+    body: JSON.stringify({
+      accessToken: session.access_token,
+    }),
+  });
+
+  const result = await response.json();
+  if (!response.ok || !result.success) {
+    throw new Error(result.error || `Analysis failed with HTTP status ${response.status}`);
+  }
+
+  return result;
 }
 
 export async function getRealTrendsData(): Promise<{
